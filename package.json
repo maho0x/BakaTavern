@@ -1,0 +1,36 @@
+{
+  "name": "bakatavern",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.11.2",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @bakatavern/web dev",
+    "dev:server": "cargo run -p bt-cli -- serve",
+    "build": "pnpm --filter @bakatavern/web build && cargo build --release -p bt-cli",
+    "test": "pnpm -r --if-present test && cargo test --workspace",
+    "test:ts": "pnpm -r --if-present test",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "lint": "eslint . && cargo clippy --workspace --all-targets -- -D warnings",
+    "format": "prettier --write . && cargo fmt --all",
+    "bindings": "cargo test --workspace export_bindings && node tools/scripts/gen-api-types.mjs",
+    "mock-llm": "node tools/mock-llm/src/main.ts",
+    "e2e": "pnpm --filter @bakatavern/e2e e2e",
+    "st-diff:record": "pnpm --filter @bakatavern/st-diff record"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^24.10.0",
+    "eslint": "^10.12.0",
+    "eslint-plugin-svelte": "^3.23.1",
+    "globals": "^17.13.0",
+    "prettier": "^3.9.10",
+    "prettier-plugin-svelte": "^4.1.1",
+    "svelte": "^5.57.2",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.71.2",
+    "vitest": "^5.0.4"
+  }
+}

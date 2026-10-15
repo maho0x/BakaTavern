@@ -1,0 +1,7 @@
+target/
+dist/
+node_modules/
+pnpm-lock.yaml
+fixtures/
+LICENSE
+packages/api-client/src/generated/

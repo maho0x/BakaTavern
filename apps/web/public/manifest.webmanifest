@@ -1,0 +1,9 @@
+{
+  "name": "BakaTavern",
+  "short_name": "BakaTavern",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#191621",
+  "theme_color": "#191621",
+  "icons": [{ "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

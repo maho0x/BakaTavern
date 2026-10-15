@@ -1,0 +1,60 @@
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+rust-version = "1.90"
+
+[workspace.dependencies]
+bt-store = { path = "crates/bt-store" }
+bt-formats = { path = "crates/bt-formats" }
+bt-server = { path = "crates/bt-server" }
+
+anyhow = "1.0"
+argon2 = "0.6"
+axum = { version = "0.8", features = ["macros", "multipart"] }
+base64 = "0.23"
+blake3 = "1.8"
+bytes = "1.12"
+chacha20poly1305 = "0.11"
+clap = { version = "4.6", features = ["derive", "env"] }
+crc32fast = "1.5"
+futures-util = "0.3"
+hex = "0.4"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp", "gif"] }
+mime_guess = "2.0"
+rand = "0.10"
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "http2", "stream", "socks", "gzip", "brotli", "zstd", "deflate", "charset"] }
+rusqlite = { version = "0.40", features = ["bundled", "serde_json", "functions", "blob", "backup"] }
+rust-embed = { version = "8.13", features = ["mime-guess", "include-exclude"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = { version = "1.0", features = ["preserve_order"] }
+sha2 = "0.11"
+tempfile = "3.27"
+thiserror = "2.0"
+toml = "1"
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io"] }
+tower = { version = "0.5", features = ["util"] }
+tower-http = { version = "0.7", features = ["compression-br", "compression-gzip", "compression-zstd", "trace", "cors", "set-header", "catch-panic", "limit"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+ts-rs = { version = "12", features = ["serde-json-impl", "no-serde-warnings"] }
+ulid = "3"
+url = "2.5"
+webpki-roots = "1"
+rustls-native-certs = "0.8"
+zip = { version = "9", default-features = false, features = ["deflate"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = "symbols"
+opt-level = 3
+
+[profile.dev.package."*"]
+opt-level = 1

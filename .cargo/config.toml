@@ -1,0 +1,4 @@
+[env]
+# TypeScript bindings generated from Rust API types by ts-rs (`cargo test export_bindings`).
+TS_RS_EXPORT_DIR = { value = "packages/api-client/src/generated", relative = true }
+TS_RS_LARGE_INT = "number"

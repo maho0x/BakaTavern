@@ -1,0 +1,339 @@
+/*
+ * BakaTavern design tokens. Themes override these custom properties; user CSS lives in the
+ * `user` layer so it always wins over the app's own styles.
+ */
+@layer reset, tokens, base, app, user;
+
+@layer reset {
+  *,
+  *::before,
+  *::after {
+    box-sizing: border-box;
+  }
+  * {
+    margin: 0;
+  }
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+  img,
+  svg,
+  video {
+    display: block;
+    max-width: 100%;
+  }
+  input,
+  button,
+  textarea,
+  select {
+    font: inherit;
+    color: inherit;
+  }
+  button {
+    cursor: pointer;
+  }
+  p,
+  h1,
+  h2,
+  h3,
+  h4 {
+    overflow-wrap: break-word;
+  }
+}
+
+@layer tokens {
+  :root {
+    /* Night (default) */
+    --bt-bg: #191621;
+    --bt-surface: #221e2c;
+    --bt-surface-2: #2b2638;
+    --bt-surface-3: #353046;
+    --bt-line: #3a3449;
+    --bt-ink: #e6e0ec;
+    --bt-ink-muted: #a79db5;
+    --bt-ink-faint: #7a7089;
+    --bt-dialogue: #f0c26e;
+    --bt-action: #b9a8cf;
+    --bt-accent: #5fc3ae;
+    --bt-accent-ink: #0f2a25;
+    --bt-danger: #e5707f;
+    --bt-user-tint: color-mix(in oklch, var(--bt-accent) 7%, transparent);
+    --bt-focus: color-mix(in oklch, var(--bt-accent) 70%, white);
+    --bt-scrim: rgb(10 8 14 / 60%);
+
+    --bt-font-ui:
+      system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
+      'Noto Sans CJK SC', sans-serif;
+    --bt-font-prose:
+      'Literata', 'Iowan Old Style', 'Palatino Linotype', 'LXGW WenKai Screen', 'LXGW WenKai',
+      'Noto Serif CJK SC', 'Source Han Serif SC', 'Songti SC', 'SimSun', serif;
+    --bt-font-mono: ui-monospace, 'Cascadia Code', 'JetBrains Mono', 'Sarasa Mono SC', monospace;
+
+    --bt-text-scale: 1;
+    --bt-size-xs: calc(0.75rem * var(--bt-text-scale));
+    --bt-size-sm: calc(0.8125rem * var(--bt-text-scale));
+    --bt-size-md: calc(0.9375rem * var(--bt-text-scale));
+    --bt-size-prose: calc(1.0625rem * var(--bt-text-scale));
+    --bt-size-lg: calc(1.25rem * var(--bt-text-scale));
+    --bt-size-xl: calc(1.625rem * var(--bt-text-scale));
+    --bt-leading-prose: 1.72;
+
+    --bt-chat-width: 46rem;
+    --bt-rail-width: 18.5rem;
+    --bt-panel-width: 23rem;
+    --bt-radius-sm: 6px;
+    --bt-radius: 10px;
+    --bt-gutter: 1rem;
+    --bt-ease: cubic-bezier(0.2, 0.8, 0.2, 1);
+    color-scheme: dark;
+  }
+
+  :root[data-theme='day'] {
+    --bt-bg: #f2f4f1;
+    --bt-surface: #ffffff;
+    --bt-surface-2: #e8ece7;
+    --bt-surface-3: #dbe1da;
+    --bt-line: #d3d9d2;
+    --bt-ink: #23222a;
+    --bt-ink-muted: #5f5d6b;
+    --bt-ink-faint: #8a8896;
+    --bt-dialogue: #9b5a00;
+    --bt-action: #6a5a85;
+    --bt-accent: #1f7f6e;
+    --bt-accent-ink: #ffffff;
+    --bt-danger: #b4233a;
+    --bt-focus: #1f7f6e;
+    --bt-scrim: rgb(30 34 30 / 35%);
+    color-scheme: light;
+  }
+
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme]) {
+      --bt-bg: #f2f4f1;
+      --bt-surface: #ffffff;
+      --bt-surface-2: #e8ece7;
+      --bt-surface-3: #dbe1da;
+      --bt-line: #d3d9d2;
+      --bt-ink: #23222a;
+      --bt-ink-muted: #5f5d6b;
+      --bt-ink-faint: #8a8896;
+      --bt-dialogue: #9b5a00;
+      --bt-action: #6a5a85;
+      --bt-accent: #1f7f6e;
+      --bt-accent-ink: #ffffff;
+      --bt-danger: #b4233a;
+      --bt-focus: #1f7f6e;
+      --bt-scrim: rgb(30 34 30 / 35%);
+      color-scheme: light;
+    }
+  }
+}
+
+@layer base {
+  html,
+  body {
+    height: 100%;
+  }
+  body {
+    background: var(--bt-bg);
+    color: var(--bt-ink);
+    font-family: var(--bt-font-ui);
+    font-size: var(--bt-size-md);
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+  #app {
+    height: 100dvh;
+  }
+  a {
+    color: var(--bt-accent);
+  }
+  :focus-visible {
+    outline: 2px solid var(--bt-focus);
+    outline-offset: 2px;
+    border-radius: 4px;
+  }
+  ::selection {
+    background: color-mix(in oklch, var(--bt-accent) 35%, transparent);
+  }
+  hr {
+    border: 0;
+    border-top: 1px solid var(--bt-line);
+  }
+  code,
+  pre,
+  kbd {
+    font-family: var(--bt-font-mono);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 1ms !important;
+      transition-duration: 1ms !important;
+    }
+  }
+}
+
+@layer app {
+  /* Buttons */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    min-height: 2.25rem;
+    padding: 0 0.9rem;
+    border-radius: var(--bt-radius-sm);
+    border: 1px solid var(--bt-line);
+    background: var(--bt-surface-2);
+    color: var(--bt-ink);
+    font-size: var(--bt-size-sm);
+    font-weight: 500;
+    white-space: nowrap;
+    transition:
+      background 120ms,
+      border-color 120ms;
+  }
+  .btn:hover {
+    background: var(--bt-surface-3);
+  }
+  .btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+  .btn.primary {
+    background: var(--bt-accent);
+    border-color: transparent;
+    color: var(--bt-accent-ink);
+  }
+  .btn.primary:hover {
+    background: color-mix(in oklch, var(--bt-accent) 88%, white);
+  }
+  .btn.danger {
+    color: var(--bt-danger);
+  }
+  .btn.ghost {
+    background: transparent;
+    border-color: transparent;
+  }
+  .btn.ghost:hover {
+    background: var(--bt-surface-2);
+  }
+  .icon-btn {
+    display: inline-grid;
+    place-items: center;
+    width: 2.25rem;
+    height: 2.25rem;
+    flex: none;
+    border: 0;
+    border-radius: var(--bt-radius-sm);
+    background: transparent;
+    color: var(--bt-ink-muted);
+  }
+  .icon-btn:hover {
+    background: var(--bt-surface-2);
+    color: var(--bt-ink);
+  }
+  .icon-btn.small {
+    width: 1.75rem;
+    height: 1.75rem;
+  }
+
+  /* Form fields */
+  .field {
+    display: grid;
+    gap: 0.3rem;
+  }
+  .field > span {
+    font-size: var(--bt-size-sm);
+    color: var(--bt-ink-muted);
+  }
+  .field > small {
+    font-size: var(--bt-size-xs);
+    color: var(--bt-ink-faint);
+  }
+  .input,
+  .textarea,
+  .select {
+    width: 100%;
+    border: 1px solid var(--bt-line);
+    border-radius: var(--bt-radius-sm);
+    background: var(--bt-bg);
+    color: var(--bt-ink);
+    padding: 0.5rem 0.65rem;
+    font-size: var(--bt-size-md);
+  }
+  .textarea {
+    resize: vertical;
+    min-height: 5rem;
+    line-height: 1.55;
+  }
+  .textarea.prose {
+    font-family: var(--bt-font-prose);
+    font-size: var(--bt-size-prose);
+  }
+  .input:focus,
+  .textarea:focus,
+  .select:focus {
+    border-color: var(--bt-accent);
+    outline: none;
+  }
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+    font-size: var(--bt-size-sm);
+  }
+  .check input {
+    accent-color: var(--bt-accent);
+    width: 1rem;
+    height: 1rem;
+  }
+  input[type='range'] {
+    accent-color: var(--bt-accent);
+    width: 100%;
+  }
+
+  /* Overlays */
+  dialog.sheet {
+    border: 1px solid var(--bt-line);
+    border-radius: var(--bt-radius);
+    padding: 0;
+    background: var(--bt-surface);
+    color: var(--bt-ink);
+    width: min(44rem, calc(100vw - 2rem));
+    max-height: calc(100dvh - 3rem);
+  }
+  dialog.sheet::backdrop {
+    background: var(--bt-scrim);
+  }
+  @media (max-width: 640px) {
+    dialog.sheet {
+      width: 100vw;
+      max-width: 100vw;
+      max-height: 100dvh;
+      height: 100dvh;
+      border-radius: 0;
+      margin: 0;
+    }
+  }
+
+  .muted {
+    color: var(--bt-ink-muted);
+  }
+  .faint {
+    color: var(--bt-ink-faint);
+  }
+  .visually-hidden {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+}

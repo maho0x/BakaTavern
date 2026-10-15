@@ -1,0 +1,18 @@
+{
+  "name": "@bakatavern/st-diff",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Differential tests: the same scenarios through SillyTavern 1.19 and BakaTavern, comparing the requests sent to the model.",
+  "scripts": {
+    "test": "vitest run",
+    "record": "node src/record.ts",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@bakatavern/core": "workspace:*"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1"
+  }
+}

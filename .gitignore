@@ -1,0 +1,32 @@
+# Rust
+/target/
+**/*.rs.bk
+
+# Node
+node_modules/
+.pnpm-store/
+dist/
+*.tsbuildinfo
+.vite/
+coverage/
+playwright-report/
+test-results/
+
+# BakaTavern runtime data
+/data/
+*.db
+*.db-wal
+*.db-shm
+
+# Editors / OS
+.DS_Store
+.idea/
+*.swp
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Env
+.env
+.env.*
+!.env.example

@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  typescript:
+    name: TypeScript
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec eslint .
+      - run: pnpm exec prettier --check .
+      - run: pnpm -r --if-present typecheck
+      # Includes tools/st-diff: prompts compared with recorded SillyTavern 1.19 requests.
+      - run: pnpm -r --if-present test
+      - run: pnpm --filter @bakatavern/web build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: apps/web/dist
+          retention-days: 3
+
+  rust:
+    name: Rust
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # rust-toolchain.toml selects the toolchain.
+      - run: rustup show active-toolchain
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo test --workspace --locked
+
+  e2e:
+    name: Browser end-to-end
+    needs: typescript
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: apps/web/dist
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build -p bt-cli --locked
+      - run: pnpm --filter @bakatavern/e2e exec playwright install --with-deps chromium-headless-shell
+      - run: pnpm e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: |
+            tools/e2e/playwright-report
+            tools/e2e/test-results
+          retention-days: 7

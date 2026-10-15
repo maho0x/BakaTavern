@@ -1,0 +1,10 @@
+**/node_modules
+**/dist
+target
+data
+.git
+**/test-results
+**/playwright-report
+*.db
+*.db-wal
+*.db-shm

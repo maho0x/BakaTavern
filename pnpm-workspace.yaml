@@ -1,0 +1,9 @@
+packages:
+  - apps/*
+  - packages/*
+  - plugins/*
+  - tools/*
+minimumReleaseAgeExclude:
+  - '@playwright/test@1.64.1'
+  - playwright-core@1.64.1
+  - playwright@1.64.1

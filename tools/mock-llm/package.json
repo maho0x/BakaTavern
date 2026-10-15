@@ -1,0 +1,13 @@
+{
+  "name": "@bakatavern/mock-llm",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Scriptable OpenAI / Claude / Gemini mock server that records requests (tests and development).",
+  "bin": {
+    "mock-llm": "./src/main.ts"
+  },
+  "scripts": {
+    "start": "node src/main.ts"
+  }
+}
