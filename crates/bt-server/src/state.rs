@@ -22,6 +22,8 @@ pub struct Inner {
     pub jobs: JobRegistry,
     pub default_user_id: String,
     pub login_limiter: RateLimiter,
+    /// One tokenizer download at a time.
+    pub tokenizer_downloads: tokio::sync::Mutex<()>,
 }
 
 /// Shared application state (cheap to clone).
@@ -62,6 +64,7 @@ impl AppState {
             events: Events::default(),
             default_user_id: default_user.id,
             login_limiter: RateLimiter::new(10, std::time::Duration::from_secs(15 * 60)),
+            tokenizer_downloads: tokio::sync::Mutex::new(()),
         })))
     }
 

@@ -1,0 +1,96 @@
+{
+  "scenario": "media-gemini",
+  "image": "ghcr.io/sillytavern/sillytavern:1.19.0",
+  "recordedAt": "2026-10-16T10:43:16.039Z",
+  "request": {
+    "path": "/v1beta/models/gemini-2.5-flash:generateContent?key=st-diff",
+    "body": {
+      "contents": [
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Write Aiko's next reply in a fictional chat between Aiko and User.\n\nAiko is a cheerful barista at the Moonlit Café. She remembers every regular by name.\n\ncheerful, curious, a little nosy\n\nUser walks into the café on a rainy evening.\n\n[Example Chat]\n\nUser: Hi!\n\nAiko: Oh, hello there! The usual?\n\n[Example Chat]\n\nUser: What do you recommend?\n\nAiko: *She taps the menu.* Matcha latte, always.\n\n[Start a new Chat]"
+            }
+          ]
+        },
+        {
+          "role": "model",
+          "parts": [
+            {
+              "text": "*Aiko looks up from the counter.* Welcome in, User! Rough weather out there?"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Hi Aiko. It is pouring outside."
+            }
+          ]
+        },
+        {
+          "role": "model",
+          "parts": [
+            {
+              "text": "*She slides a towel across the counter.* Dry off first. Tea or coffee?"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "parts": [
+            {
+              "text": "Here is the menu and a clip of the café."
+            },
+            {
+              "inlineData": {
+                "mimeType": "image/png",
+                "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFBQIAX8jx0gAAAABJRU5ErkJggg=="
+              }
+            },
+            {
+              "inlineData": {
+                "mimeType": "video/mp4",
+                "data": "AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDE="
+              }
+            }
+          ]
+        }
+      ],
+      "safetySettings": [
+        {
+          "category": "HARM_CATEGORY_HARASSMENT",
+          "threshold": "OFF"
+        },
+        {
+          "category": "HARM_CATEGORY_HATE_SPEECH",
+          "threshold": "OFF"
+        },
+        {
+          "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+          "threshold": "OFF"
+        },
+        {
+          "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+          "threshold": "OFF"
+        },
+        {
+          "category": "HARM_CATEGORY_CIVIC_INTEGRITY",
+          "threshold": "OFF"
+        }
+      ],
+      "generationConfig": {
+        "candidateCount": 1,
+        "maxOutputTokens": 300,
+        "temperature": 1,
+        "topP": 1,
+        "thinkingConfig": {
+          "includeThoughts": true,
+          "thinkingBudget": -1
+        }
+      }
+    }
+  }
+}

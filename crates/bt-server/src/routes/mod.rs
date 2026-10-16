@@ -1,13 +1,16 @@
 mod bootstrap;
-mod characters;
-mod chats;
-mod files;
+pub(crate) mod characters;
+pub(crate) mod chats;
+pub(crate) mod files;
 mod lorebooks;
 mod personas;
 mod presets;
+mod prompts;
 mod secrets;
 mod settings;
+mod sillytavern;
 mod tags;
+mod tokenizers;
 
 use axum::Router;
 use axum::extract::Multipart;
@@ -16,6 +19,11 @@ use crate::error::{ApiError, ApiResult};
 use crate::state::AppState;
 
 pub use files::store_file;
+
+/// Moving to and from SillyTavern; the backup upload has its own (larger) body limit.
+pub fn import_routes(max_import_mb: u64) -> Router<AppState> {
+    sillytavern::routes(max_import_mb)
+}
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -26,9 +34,11 @@ pub fn routes() -> Router<AppState> {
         .merge(lorebooks::routes())
         .merge(personas::routes())
         .merge(presets::routes())
+        .merge(prompts::routes())
         .merge(secrets::routes())
         .merge(settings::routes())
         .merge(tags::routes())
+        .merge(tokenizers::routes())
 }
 
 /// An uploaded file from a multipart form.

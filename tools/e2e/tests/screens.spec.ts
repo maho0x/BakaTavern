@@ -18,7 +18,8 @@ for (const scheme of ['dark', 'light'] as const) {
 
     await page.goto('/');
     await shot('1-welcome');
-    await importCards(page, [{ name: 'aiko', card: { v2: v2Card(uniqueName('Aiko', testInfo)) } }]);
+    const name = uniqueName(`Aiko ${scheme}`, testInfo);
+    await importCards(page, [{ name: 'aiko', card: { v2: v2Card(name) } }]);
     await mockReply(request, {
       reply:
         '*Aiko sets down a steaming cup.* "Two matcha lattes, coming up!"\n\nShe hums while she works, glancing at the rain. "You picked a good night to stay in."',
@@ -33,5 +34,25 @@ for (const scheme of ['dark', 'light'] as const) {
     await shot('4-preset');
     await page.getByRole('tab', { name: 'World Info' }).click();
     await shot('5-worldinfo');
+    await page.getByRole('button', { name: new RegExp(`^${name}'s café`) }).click();
+    const lorebook = page.getByRole('dialog', { name: `${name}'s café` });
+    await lorebook
+      .getByRole('button', { name: /^By keywords/ })
+      .first()
+      .click();
+    await shot('5b-lorebook-editor');
+    await lorebook.getByRole('button', { name: 'Close' }).click();
+    await page.getByRole('tab', { name: 'Regex' }).click();
+    const global = page.locator('section', { has: page.getByRole('heading', { name: 'Global scripts' }) });
+    await global.getByRole('button', { name: 'New script' }).click();
+    const editor = page.getByRole('dialog', { name: 'Regex script' });
+    await editor.getByLabel('Name', { exact: true }).fill('Narration in italics');
+    await editor.getByLabel('Find', { exact: true }).fill('/\\((.+?)\\)/g');
+    await editor.getByLabel('Replace with', { exact: true }).fill('*$1*');
+    await editor.getByText('Try it').click();
+    await editor.getByLabel('Text', { exact: true }).fill('(She smiles.) Hello!');
+    await shot('6-regex-editor');
+    await editor.getByRole('button', { name: 'Save' }).click();
+    await shot('7-regex');
   });
 }

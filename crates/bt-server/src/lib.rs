@@ -1,5 +1,6 @@
 //! BakaTavern HTTP server. Used as a library by the `bakatavern` CLI and (later) the Tauri shells.
 
+mod attachments;
 pub mod auth;
 pub mod config;
 mod convert;
@@ -10,6 +11,8 @@ pub mod llm;
 mod media;
 pub mod net;
 mod routes;
+pub mod st_export;
+pub mod st_import;
 pub mod state;
 mod web;
 
@@ -21,7 +24,7 @@ use anyhow::Context;
 use axum::extract::DefaultBodyLimit;
 use axum::http::Response;
 use axum::{Router, middleware, routing};
-use bt_store::repo::{jobs, sessions, users};
+use bt_store::repo::{jobs, prompt_logs, sessions, users};
 use tower_http::compression::CompressionLayer;
 use tower_http::compression::predicate::{DefaultPredicate, Predicate};
 use tower_http::trace::TraceLayer;
@@ -45,6 +48,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .merge(auth::routes())
         .merge(routes::routes())
+        .merge(routes::import_routes(state.config.limits.max_import_mb))
         .merge(llm::routes())
         .route("/api/events", routing::get(events::stream))
         .fallback(web::serve)
@@ -77,18 +81,60 @@ pub fn set_password(
     Ok(())
 }
 
+/// Imports SillyTavern data from a directory or a backup zip (the `import-st` command).
+pub async fn import_st(
+    config: Config,
+    path: &std::path::Path,
+    handle: Option<String>,
+    options: st_import::ImportOptions,
+) -> anyhow::Result<st_import::StImportReport> {
+    let state = AppState::new(config)?;
+    let user = state
+        .db
+        .write(move |c| match handle {
+            Some(handle) => users::get_by_handle(c, &handle)?
+                .ok_or_else(|| bt_store::StoreError::Invalid(format!("no user named {handle:?}"))),
+            None => users::ensure_default(c),
+        })
+        .await?;
+    let temp;
+    let dir = if path.is_file() {
+        temp = tempfile::tempdir()?;
+        st_import::extract_zip(std::fs::File::open(path)?, temp.path())
+            .with_context(|| format!("reading {}", path.display()))?;
+        temp.path().to_path_buf()
+    } else {
+        path.to_path_buf()
+    };
+    st_import::import(&state, &user.id, &dir, options)
+        .await
+        .map_err(|e| anyhow::anyhow!(e.message))
+}
+
 async fn maintenance(state: AppState) {
     let mut interval = tokio::time::interval(Duration::from_secs(3600));
     let retention_ms = state.config.limits.job_retention_days as i64 * 86_400_000;
+    let prompt_days = state.config.limits.prompt_log_days as i64;
     loop {
         interval.tick().await;
         let result = state
             .db
-            .write(move |c| Ok((sessions::purge_expired(c)?, jobs::purge(c, retention_ms)?)))
+            .write(move |c| {
+                let prompts = if prompt_days > 0 {
+                    prompt_logs::purge(c, prompt_days * 86_400_000)?
+                } else {
+                    0
+                };
+                Ok((
+                    sessions::purge_expired(c)?,
+                    jobs::purge(c, retention_ms)?,
+                    prompts,
+                ))
+            })
             .await;
         match result {
-            Ok((sessions, jobs)) if sessions + jobs > 0 => {
-                tracing::debug!(sessions, jobs, "purged expired rows")
+            Ok((sessions, jobs, prompts)) if sessions + jobs + prompts > 0 => {
+                tracing::debug!(sessions, jobs, prompts, "purged expired rows")
             }
             Ok(_) => {}
             Err(e) => tracing::warn!("maintenance failed: {e}"),

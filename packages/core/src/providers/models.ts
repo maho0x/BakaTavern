@@ -6,6 +6,8 @@ export interface ModelInfo {
   name: string;
   contextLength?: number;
   maxOutput?: number;
+  /** The provider's entry as listed (what the model accepts, its tokenizer, ...). */
+  entry?: Record<string, unknown>;
 }
 
 /** The request that lists a provider's models (`null` when the provider has no listing endpoint). */
@@ -58,6 +60,7 @@ export function parseModels(provider: ProviderDefinition, body: unknown): ModelI
         typeof (m.top_provider as Record<string, unknown> | undefined)?.max_completion_tokens === 'number'
           ? ((m.top_provider as Record<string, unknown>).max_completion_tokens as number)
           : undefined,
+      entry: m,
     }))
     .sort((a, b) => a.id.localeCompare(b.id));
 }

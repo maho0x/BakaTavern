@@ -1,13 +1,16 @@
 <script lang="ts">
   import type { Preset } from '@bakatavern/api-client';
   import {
+    DEFAULT_BIAS_LIST,
     defaultChatCompletionPreset,
     GLOBAL_PROMPT_ORDER_ID,
     NamesBehavior,
     normalizeChatCompletionPreset,
     PostProcessing,
+    supportsLogitBias,
     uuidv4,
     type ChatCompletionPreset,
+    type LogitBiasEntry,
     type PromptDefinition,
   } from '@bakatavern/core';
 
@@ -17,9 +20,10 @@
   import { invalidatePreset } from '../../generation/pipeline.ts';
   import { t, type MessageKey } from '../../i18n/index.svelte.ts';
   import { library } from '../../state/library.svelte.ts';
-  import { connectionDefaults } from '../../state/prefs.ts';
+  import { connectionDefaults, logitBiasDefaults } from '../../state/prefs.ts';
   import { settings } from '../../state/settings.svelte.ts';
   import { errorText, ui } from '../../state/ui.svelte.ts';
+  import LogitBiasList from './LogitBiasList.svelte';
 
   const prefs = $derived(settings.get('connection', connectionDefaults));
   const presets = $derived(library.presets.filter((p) => p.kind === 'openai'));
@@ -185,6 +189,62 @@
     changed();
   }
 
+  // Logit bias lists live in the settings; the preset names the one it uses.
+  const biasLists = $derived(settings.get('logitbias', logitBiasDefaults).lists);
+  const biasName = $derived(
+    draft && draft.bias_preset_selected in biasLists ? draft.bias_preset_selected : DEFAULT_BIAS_LIST,
+  );
+  let biasFile = $state<HTMLInputElement>();
+  const setBiasLists = (lists: Record<string, LogitBiasEntry[]>) => settings.update('logitbias', { lists });
+  function selectBias(name: string) {
+    if (!draft) return;
+    draft.bias_preset_selected = name;
+    changed();
+  }
+  function addBiasList(name: string | undefined, entries: LogitBiasEntry[] = []) {
+    name = name?.trim();
+    if (!name) return;
+    if (name in biasLists) {
+      ui.toast(t('bias.exists', { name }), 'error');
+      return;
+    }
+    setBiasLists({ ...biasLists, [name]: entries });
+    selectBias(name);
+  }
+  function removeBiasList() {
+    if (!confirm(t('bias.deleteConfirm', { name: biasName }))) return;
+    const rest = { ...biasLists };
+    delete rest[biasName];
+    setBiasLists(rest);
+    selectBias(Object.keys(rest)[0] ?? DEFAULT_BIAS_LIST);
+  }
+  /** Lists are files with an array of `{ text, value }`, as SillyTavern exports them. */
+  async function importBiasList(file: File | undefined) {
+    if (!file) return;
+    try {
+      const data = JSON.parse(await file.text()) as unknown;
+      if (!Array.isArray(data)) throw new Error(t('bias.notList'));
+      const entries = data
+        .filter(
+          (e): e is { text: string; value: number } =>
+            typeof e?.text === 'string' && typeof e?.value === 'number',
+        )
+        .map((e) => ({ id: uuidv4(), text: e.text, value: e.value }));
+      addBiasList(file.name.replace(/\.json$/i, ''), entries);
+    } catch (error) {
+      ui.toast(errorText(error), 'error');
+    }
+  }
+  function exportBiasList() {
+    const blob = new Blob([JSON.stringify(biasLists[biasName] ?? [], null, 4)], { type: 'application/json' });
+    const a = Object.assign(document.createElement('a'), {
+      href: URL.createObjectURL(blob),
+      download: `${biasName}.json`,
+    });
+    a.click();
+    URL.revokeObjectURL(a.href);
+  }
+
   const samplers: {
     key: keyof ChatCompletionPreset;
     label: MessageKey;
@@ -196,6 +256,7 @@
     { key: 'top_p_openai', label: 'preset.topP', min: 0, max: 1, step: 0.01 },
     { key: 'top_k_openai', label: 'preset.topK', min: 0, max: 500, step: 1 },
     { key: 'min_p_openai', label: 'preset.minP', min: 0, max: 1, step: 0.001 },
+    { key: 'top_a_openai', label: 'preset.topA', min: 0, max: 1, step: 0.001 },
     { key: 'freq_pen_openai', label: 'preset.freqPenalty', min: -2, max: 2, step: 0.01 },
     { key: 'pres_pen_openai', label: 'preset.presPenalty', min: -2, max: 2, step: 0.01 },
     { key: 'repetition_penalty_openai', label: 'preset.repPenalty', min: 1, max: 2, step: 0.01 },
@@ -329,11 +390,65 @@
           /></label
         >
       </div>
+      <label class="field">
+        <span>{t('preset.verbosity')}</span>
+        <select class="select" bind:value={draft.verbosity} onchange={changed}>
+          {#each ['auto', 'low', 'medium', 'high'] as level (level)}<option value={level}>{level}</option
+            >{/each}
+        </select>
+      </label>
       <label class="check"
         ><input type="checkbox" bind:checked={draft.show_thoughts} onchange={changed} />{t(
           'preset.showThoughts',
         )}</label
       >
+      <label class="check"
+        ><input
+          type="checkbox"
+          checked={!!draft.enable_web_search}
+          onchange={(e) => {
+            draft!.enable_web_search = e.currentTarget.checked;
+            changed();
+          }}
+        />{t('preset.webSearch')}</label
+      >
+      <label class="check"
+        ><input type="checkbox" bind:checked={draft.function_calling} onchange={changed} />{t(
+          'preset.functionCalling',
+        )}</label
+      >
+      {#if draft.function_calling && ['custom', 'openrouter'].includes(prefs.providerId)}
+        <label class="field">
+          <span>{t('preset.toolReasoning')}</span>
+          <select
+            class="select"
+            value={String(draft.tool_reasoning_mode ?? 'disabled')}
+            onchange={(e) => {
+              draft!.tool_reasoning_mode = e.currentTarget.value;
+              changed();
+            }}
+          >
+            <option value="disabled">{t('preset.toolReasoningOff')}</option>
+            <option value="active_chain">{t('preset.toolReasoningChain')}</option>
+            <option value="since_last_user">{t('preset.toolReasoningSinceUser')}</option>
+          </select>
+        </label>
+      {/if}
+      <label class="check"
+        ><input type="checkbox" bind:checked={draft.media_inlining} onchange={changed} />{t(
+          'preset.mediaInlining',
+        )}</label
+      >
+      {#if draft.media_inlining}
+        <label class="field">
+          <span>{t('preset.imageQuality')}</span>
+          <select class="select" bind:value={draft.inline_image_quality} onchange={changed}>
+            <option value="auto">{t('preset.imageQualityAuto')}</option>
+            <option value="low">{t('preset.imageQualityLow')}</option>
+            <option value="high">{t('preset.imageQualityHigh')}</option>
+          </select>
+        </label>
+      {/if}
     </section>
 
     <section>
@@ -438,6 +553,64 @@
         >
       </div>
     </details>
+
+    {#if supportsLogitBias(prefs.providerId)}
+      <details>
+        <summary>{t('bias.title')}</summary>
+        <div class="stack inner">
+          <div class="row">
+            <select
+              class="select"
+              value={biasName}
+              onchange={(e) => selectBias(e.currentTarget.value)}
+              aria-label={t('bias.list')}
+            >
+              {#each Object.keys(biasLists) as name (name)}<option value={name}>{name}</option>{/each}
+            </select>
+            <button
+              class="icon-btn"
+              title={t('bias.new')}
+              aria-label={t('bias.new')}
+              onclick={() => addBiasList(prompt(t('bias.newPrompt')) ?? undefined)}
+              ><Icon name="plus" /></button
+            >
+            <button
+              class="icon-btn"
+              title={t('preset.import')}
+              aria-label={t('preset.import')}
+              onclick={() => biasFile?.click()}><Icon name="upload" /></button
+            >
+            <button
+              class="icon-btn"
+              title={t('preset.export')}
+              aria-label={t('preset.export')}
+              onclick={exportBiasList}><Icon name="download" /></button
+            >
+            <button
+              class="icon-btn"
+              title={t('common.delete')}
+              aria-label={t('common.delete')}
+              disabled={Object.keys(biasLists).length < 2}
+              onclick={removeBiasList}><Icon name="trash" /></button
+            >
+            <input
+              bind:this={biasFile}
+              type="file"
+              accept=".json,application/json"
+              hidden
+              onchange={(e) => {
+                void importBiasList(e.currentTarget.files?.[0]);
+                e.currentTarget.value = '';
+              }}
+            />
+          </div>
+          <LogitBiasList
+            entries={biasLists[biasName] ?? []}
+            onchange={(entries) => setBiasLists({ ...biasLists, [biasName]: entries as LogitBiasEntry[] })}
+          />
+        </div>
+      </details>
+    {/if}
 
     <details>
       <summary>{t('preset.utility')}</summary>

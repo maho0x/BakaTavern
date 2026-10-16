@@ -151,7 +151,7 @@ pub fn create(
         return Err(StoreError::Invalid("lorebook name is empty".into()));
     }
     if id_by_name(conn, user_id, name)?.is_some() {
-        return Err(StoreError::Invalid(format!(
+        return Err(StoreError::Exists(format!(
             "a lorebook named {name:?} already exists"
         )));
     }
@@ -239,7 +239,7 @@ pub fn rename(conn: &Connection, user_id: &str, id: &str, name: &str) -> Result<
         return Err(StoreError::Invalid("lorebook name is empty".into()));
     }
     if id_by_name(conn, user_id, name)?.is_some_and(|other| other != id) {
-        return Err(StoreError::Invalid(format!(
+        return Err(StoreError::Exists(format!(
             "a lorebook named {name:?} already exists"
         )));
     }

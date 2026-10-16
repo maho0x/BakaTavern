@@ -1,7 +1,11 @@
 import { PostProcessing } from './preset.ts';
 import type { ChatMessage } from './types.ts';
 
-export const PROMPT_PLACEHOLDER = "Let's get started.";
+/**
+ * User message inserted where a provider needs one. SillyTavern's default config.yaml sets
+ * `promptPlaceholder` to this (its code fallback, "Let's get started.", only applies without one).
+ */
+export const PROMPT_PLACEHOLDER = '[Start a new chat]';
 
 export interface PromptNames {
   charName: string;
@@ -14,6 +18,7 @@ const startsWithGroupName = (names: PromptNames, text: string) =>
 
 function textOf(message: ChatMessage): string {
   if (typeof message.content === 'string') return message.content;
+  if (!message.content) return '';
   return message.content.map((p) => (p.type === 'text' ? p.text : '')).join('\n\n');
 }
 

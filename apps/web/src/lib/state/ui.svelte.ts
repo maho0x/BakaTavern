@@ -1,4 +1,4 @@
-export type PanelId = 'connection' | 'preset' | 'persona' | 'worldinfo' | 'settings';
+export type PanelId = 'connection' | 'preset' | 'formatting' | 'persona' | 'worldinfo' | 'regex' | 'settings';
 
 export interface Toast {
   id: number;
@@ -15,6 +15,12 @@ class Ui {
   libraryOpen = $state(false);
   /** Character editor target. */
   editingCharacterId = $state<string | null>(null);
+  /** Lorebook open in the World Info editor. */
+  editingLorebookId = $state<string | null>(null);
+  /** The "Import from a URL" dialog is open. */
+  urlImportOpen = $state(false);
+  /** The generation shown in the prompt viewer (chat and the reply's `gen_started`). */
+  promptOf = $state<{ chatId: string; startedAt: string } | null>(null);
   toasts = $state<Toast[]>([]);
   narrow = $state(false);
 

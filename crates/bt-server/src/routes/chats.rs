@@ -433,24 +433,68 @@ async fn update_message(
 pub struct BranchChat {
     /// Index of the last message to copy.
     pub up_to: i64,
+    /// Name of the new chat; SillyTavern's `<chat> - Branch #n` / `<chat> - Checkpoint #n` when
+    /// missing. A name another chat of the character has is refused (409 `exists`).
     pub title: Option<String>,
+    /// The swipe the copied last message shows.
+    pub swipe_id: Option<i64>,
+    /// A checkpoint: the message links to the new chat (`extra.bookmark_link`); a branch is
+    /// listed in the message's `extra.branches` instead.
+    pub checkpoint: Option<bool>,
 }
 
-/// Copies the chat up to a message into a new chat (SillyTavern "branch").
+#[derive(Serialize, TS)]
+#[ts(export)]
+pub struct Branched {
+    pub chat: Chat,
+    /// The message the chat was branched at, with its link to the new chat.
+    pub message: Message,
+}
+
+/// SillyTavern's name for a branch or checkpoint of `main`: its own suffix replaced by the
+/// first free `- Branch #n` / `- Checkpoint #n`.
+fn branch_title(main: &str, token: &str, taken: impl Fn(&str) -> bool) -> Option<String> {
+    let mut clean = main.to_string();
+    if let Some(i) = clean.rfind(&format!(" - {token}"))
+        && clean[i + token.len() + 3..]
+            .chars()
+            .all(|c| c.is_ascii_digit())
+        && clean.len() > i + token.len() + 3
+    {
+        clean.truncate(i);
+    }
+    if let Some(rest) = clean.strip_prefix(token)
+        && let Some((digits, rest)) = rest.split_once(" - ")
+        && !digits.is_empty()
+        && digits.chars().all(|c| c.is_ascii_digit())
+    {
+        clean = rest.to_string();
+    }
+    (1..10_000)
+        .map(|n| format!("{clean} - {token}{n}"))
+        .find(|t| !taken(t))
+}
+
+/// Copies the chat up to a message into a new chat (SillyTavern's branches and checkpoints).
 async fn branch(
     State(state): State<AppState>,
     user: CurrentUser,
     ClientId(origin): ClientId,
     Path(id): Path<String>,
     Json(body): Json<BranchChat>,
-) -> ApiResult<Json<Chat>> {
+) -> ApiResult<Json<Branched>> {
     let user_id = user.id.clone();
-    let chat = state
+    let checkpoint = body.checkpoint.unwrap_or(false);
+    let branched = state
         .db
         .write(move |c| {
             let tx = c.transaction()?;
             let source = chats::get(&tx, &user_id, &id)?;
-            let copied: Vec<NewMessage> = messages::range(&tx, &id, 0, body.up_to + 1)?
+            let originals = messages::range(&tx, &id, 0, body.up_to + 1)?;
+            let Some(at) = originals.last().filter(|m| m.seq == body.up_to).cloned() else {
+                return Err(bt_store::StoreError::NotFound);
+            };
+            let mut copied: Vec<NewMessage> = originals
                 .into_iter()
                 .map(|m| NewMessage {
                     role: m.role,
@@ -464,29 +508,54 @@ async fn branch(
                     created_at: Some(m.created_at),
                 })
                 .collect();
+            if let (Some(swipe_id), Some(last)) = (body.swipe_id, copied.last_mut()) {
+                if swipe_id < 0 || swipe_id as usize >= last.swipes.len() {
+                    return Err(bt_store::StoreError::Invalid("no such swipe".into()));
+                }
+                last.swipe_id = Some(swipe_id);
+            }
+            let titles: Vec<String> = match &source.character_id {
+                Some(character_id) => chats::list_for_character(&tx, &user_id, character_id)?
+                    .into_iter()
+                    .map(|c| c.title)
+                    .collect(),
+                None => Vec::new(),
+            };
+            let title = match body
+                .title
+                .map(|t| t.trim().to_string())
+                .filter(|t| !t.is_empty())
+            {
+                Some(title) if titles.contains(&title) => {
+                    return Err(bt_store::StoreError::Exists(format!(
+                        "a chat named \"{title}\" already exists"
+                    )));
+                }
+                Some(title) => title,
+                None => branch_title(
+                    &source.title,
+                    if checkpoint {
+                        "Checkpoint #"
+                    } else {
+                        "Branch #"
+                    },
+                    |t| titles.iter().any(|x| x == t),
+                )
+                .ok_or_else(|| bt_store::StoreError::Invalid("no free chat name".into()))?,
+            };
             let mut metadata = source.metadata.clone();
             if let Some(map) = metadata.as_object_mut() {
                 map.insert("main_chat".into(), json!(source.title));
                 // A branch is a different file for SillyTavern's integrity check.
                 map.remove("integrity");
             }
-            let title = body
-                .title
-                .filter(|t| !t.trim().is_empty())
-                .unwrap_or_else(|| {
-                    format!(
-                        "Branch #{} - {}",
-                        body.up_to,
-                        bt_formats::date::to_iso(now_ms())
-                    )
-                });
             let chat = chats::create(
                 &tx,
                 &user_id,
                 NewChat {
                     character_id: source.character_id.clone(),
                     group_id: source.group_id.clone(),
-                    title,
+                    title: title.clone(),
                     metadata,
                     header: new_header(),
                     created_at: None,
@@ -494,19 +563,52 @@ async fn branch(
             )?;
             messages::insert(&tx, &chat.id, None, &copied)?;
             let chat = chats::get(&tx, &user_id, &chat.id)?;
+
+            // The message links to its checkpoint, or lists its branches.
+            let mut extra = match at.extra {
+                Value::Object(map) => map,
+                _ => Map::new(),
+            };
+            if checkpoint {
+                extra.insert("bookmark_link".into(), json!(title));
+            } else {
+                match extra.get_mut("branches") {
+                    Some(Value::Array(list)) => list.push(json!(title)),
+                    _ => {
+                        extra.insert("branches".into(), json!([title]));
+                    }
+                }
+            }
+            let message = messages::update(
+                &tx,
+                &at.id,
+                &MessagePatch {
+                    extra: Some(Value::Object(extra)),
+                    ..Default::default()
+                },
+                None,
+            )?;
             tx.commit()?;
-            Ok(chat)
+            Ok(Branched { chat, message })
         })
         .await?;
     state.notify(
         &user.id,
         "chat",
         "created",
-        &chat.id,
-        Some(chat.rev),
+        &branched.chat.id,
+        Some(branched.chat.rev),
         &origin,
     );
-    Ok(Json(chat))
+    state.notify_message(
+        &user.id,
+        &branched.message.chat_id,
+        "updated",
+        &branched.message.id,
+        Some(branched.message.rev),
+        &origin,
+    );
+    Ok(Json(branched))
 }
 
 async fn import(
@@ -520,14 +622,51 @@ async fn import(
     let upload = single_upload(uploads)?;
     let text = String::from_utf8(upload.bytes)
         .map_err(|_| ApiError::bad_request("the chat file is not UTF-8 text"))?;
-    let parsed = chat::parse_jsonl(&text)?;
     let title = upload.file_name.trim_end_matches(".jsonl").to_string();
+    let chat = import_jsonl(&state, &user.id, character_id, title, &text).await?;
+    state.notify(
+        &user.id,
+        "chat",
+        "created",
+        &chat.id,
+        Some(chat.rev),
+        &origin,
+    );
+    Ok(Json(chat))
+}
+
+/// Imports a SillyTavern JSONL chat for a character.
+pub(crate) async fn import_jsonl(
+    state: &AppState,
+    user_id: &str,
+    character_id: Option<String>,
+    title: String,
+    text: &str,
+) -> ApiResult<Chat> {
+    import_parsed(
+        state,
+        user_id,
+        character_id,
+        title,
+        chat::parse_jsonl(text)?,
+    )
+    .await
+}
+
+/// Stores a parsed SillyTavern chat as a new chat.
+pub(crate) async fn import_parsed(
+    state: &AppState,
+    user_id: &str,
+    character_id: Option<String>,
+    title: String,
+    parsed: chat::StChat,
+) -> ApiResult<Chat> {
     let created_at = parsed
         .header
         .get("create_date")
         .and_then(Value::as_str)
         .and_then(bt_formats::date::parse_st_date);
-    let user_id = user.id.clone();
+    let user_id = user_id.to_string();
     let chat = state
         .db
         .write(move |c| {
@@ -552,15 +691,7 @@ async fn import(
             Ok(chat)
         })
         .await?;
-    state.notify(
-        &user.id,
-        "chat",
-        "created",
-        &chat.id,
-        Some(chat.rev),
-        &origin,
-    );
-    Ok(Json(chat))
+    Ok(chat)
 }
 
 #[derive(Deserialize)]
@@ -610,4 +741,33 @@ async fn export(
         HeaderValue::from_str(&attachment(&name)).map_err(ApiError::internal)?,
     );
     Ok(response)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::branch_title;
+
+    #[test]
+    fn branch_titles_follow_sillytavern() {
+        let none = |_: &str| false;
+        assert_eq!(
+            branch_title("Aiko - 2026", "Branch #", none).unwrap(),
+            "Aiko - 2026 - Branch #1"
+        );
+        // A branch of a branch: the suffix is replaced, not stacked.
+        let taken = |t: &str| t == "Aiko - Branch #1";
+        assert_eq!(
+            branch_title("Aiko - Branch #1", "Branch #", taken).unwrap(),
+            "Aiko - Branch #2"
+        );
+        // The old "Branch #n - name" style loses its prefix.
+        assert_eq!(
+            branch_title("Checkpoint #4 - Aiko", "Checkpoint #", none).unwrap(),
+            "Aiko - Checkpoint #1"
+        );
+        assert_eq!(
+            branch_title("Aiko - Branch #x", "Branch #", none).unwrap(),
+            "Aiko - Branch #x - Branch #1"
+        );
+    }
 }

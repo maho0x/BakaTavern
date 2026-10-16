@@ -34,6 +34,18 @@ enum Command {
         #[arg(long, env = "BT_PASSWORD", hide_env_values = true)]
         password: Option<String>,
     },
+    /// Import a SillyTavern data folder or backup zip: cards, chats, lorebooks, presets,
+    /// personas and tags; settings are applied the next time the web app opens.
+    ImportSt {
+        /// SillyTavern folder (its install folder, `data/<user>`) or a backup zip.
+        path: PathBuf,
+        /// BakaTavern user to import into (the default user when omitted).
+        #[arg(long)]
+        user: Option<String>,
+        /// Also import the API keys from secrets.json.
+        #[arg(long)]
+        secrets: bool,
+    },
     /// Set or clear a user's login password.
     Passwd {
         /// User handle (the default user when omitted).
@@ -55,6 +67,38 @@ fn read_password() -> anyhow::Result<String> {
         "the password must have at least 4 characters"
     );
     Ok(password)
+}
+
+fn print_import_report(report: &bt_server::st_import::StImportReport) {
+    eprintln!(
+        "Imported {} characters, {} chats, {} lorebooks, {} presets, {} personas, {} keys.",
+        report.characters,
+        report.chats,
+        report.lorebooks,
+        report.presets,
+        report.personas,
+        report.secrets
+    );
+    if report.unchanged > 0 {
+        eprintln!(
+            "{} items were already here and were left as they are.",
+            report.unchanged
+        );
+    }
+    if report.settings {
+        eprintln!("Settings will be applied the next time BakaTavern opens in the browser.");
+    }
+    if !report.skipped.is_empty() {
+        let skipped: Vec<String> = report
+            .skipped
+            .iter()
+            .map(|(k, n)| format!("{k}: {n}"))
+            .collect();
+        eprintln!("Not imported yet (later versions): {}", skipped.join(", "));
+    }
+    for failure in &report.failures {
+        eprintln!("  failed: {}: {}", failure.file, failure.message);
+    }
 }
 
 /// Ctrl-C, or SIGTERM (`docker stop`, systemd).
@@ -114,6 +158,21 @@ async fn main() -> anyhow::Result<()> {
                 tracing::info!("shutting down");
             })
             .await
+        }
+        Command::ImportSt {
+            path,
+            user,
+            secrets,
+        } => {
+            let report = bt_server::import_st(
+                config,
+                &path,
+                user,
+                bt_server::st_import::ImportOptions { secrets },
+            )
+            .await?;
+            print_import_report(&report);
+            Ok(())
         }
         Command::Passwd { user, clear } => {
             let password = if clear { None } else { Some(read_password()?) };

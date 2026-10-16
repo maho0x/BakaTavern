@@ -3,7 +3,10 @@ use rusqlite::Connection;
 use crate::Result;
 
 /// Ordered schema migrations; the version is tracked in `PRAGMA user_version`.
-const MIGRATIONS: &[(i64, &str)] = &[(1, include_str!("../migrations/0001_init.sql"))];
+const MIGRATIONS: &[(i64, &str)] = &[
+    (1, include_str!("../migrations/0001_init.sql")),
+    (2, include_str!("../migrations/0002_prompt_logs.sql")),
+];
 
 pub(crate) fn run(conn: &mut Connection) -> Result<()> {
     let current: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;

@@ -251,7 +251,7 @@ describe('mergeMessages', () => {
     );
     expect(merged).toEqual([
       { role: 'system', content: 'Main\n\nSeraphina: Example' },
-      { role: 'user', content: "Let's get started." },
+      { role: 'user', content: '[Start a new chat]' },
       { role: 'assistant', content: 'Hi' },
       { role: 'user', content: 'Alice: Yo' },
     ]);

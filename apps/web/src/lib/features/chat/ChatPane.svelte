@@ -18,7 +18,8 @@
   let chatMenuOpen = $state(false);
   let importInput = $state<HTMLInputElement>();
 
-  const generation = $derived(chat.generation);
+  // Once the reply is stored it shows as a regular message; the streamed copy goes away.
+  const generation = $derived(chat.generation?.stored ? null : chat.generation);
   const streamTarget = $derived.by(() => {
     const target = generation?.target;
     if (!target || target.kind === 'new' || target.kind === 'impersonate') return null;
@@ -57,6 +58,20 @@
   async function rename() {
     const title = prompt(t('chat.renamePrompt'), chat.chat?.title)?.trim();
     if (title) await guarded(() => chat.renameChat(title));
+  }
+
+  /** The chat this one was branched from (SillyTavern `chat_metadata.main_chat`). */
+  const mainChat = $derived.by(() => {
+    const name = (chat.chat?.metadata as { main_chat?: unknown } | undefined)?.main_chat;
+    return typeof name === 'string' && chat.chats.some((c) => c.title === name) ? name : null;
+  });
+
+  async function checkpoint() {
+    const last = chat.messages.length - 1;
+    if (last < 0) return;
+    const suggested = chat.checkpointTitle();
+    const name = prompt(t('chat.checkpointPrompt'), suggested);
+    if (name !== null) await guarded(() => chat.checkpoint(last, name.trim() || suggested));
   }
 
   async function remove() {
@@ -133,6 +148,14 @@
           >
           {#if chatMenuOpen}
             <div class="menu" role="menu">
+              {#if mainChat}
+                <button role="menuitem" onclick={() => guarded(() => chat.openChatByTitle(mainChat!))}
+                  ><Icon name="back" size={15} />{t('chat.backToMain')}</button
+                >
+              {/if}
+              <button role="menuitem" onclick={checkpoint} disabled={!chat.messages.length}
+                ><Icon name="flag" size={15} />{t('chat.checkpoint')}</button
+              >
               <button role="menuitem" onclick={rename}
                 ><Icon name="edit" size={15} />{t('chat.rename')}</button
               >
@@ -202,6 +225,9 @@
 
     <Composer />
     <AuthorsNote open={noteOpen} onclose={() => (noteOpen = false)} />
+    {#if ui.promptOf}
+      {#await import('./PromptViewer.svelte') then { default: PromptViewer }}<PromptViewer />{/await}
+    {/if}
   {/if}
 </section>
 

@@ -4,19 +4,22 @@
  */
 
 import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { crc32, deflateSync } from 'node:zlib';
 
-import { stringHash } from '@bakatavern/core';
+import { getTextgenType, stringHash, type StTemplates } from '@bakatavern/core';
 
 import {
   basePreset,
-  defaultModels,
+  scenarioModel,
   personaDefaults,
+  stReasoningDefaults,
   stWorldInfoDefaults,
   type PersonaFields,
   type Scenario,
   type ScenarioMessage,
+  stSources,
+  stTextSecrets,
 } from './scenarios.ts';
 
 /** Preset file keys that SillyTavern stores under another name in `oai_settings`. */
@@ -43,7 +46,19 @@ export function scenarioPreset(
   defaultPreset: Record<string, unknown>,
   scenario: Scenario,
 ): Record<string, unknown> {
-  return { ...defaultPreset, ...basePreset, ...scenario.preset };
+  const preset = { ...defaultPreset, ...basePreset, ...scenario.preset };
+  if (scenario.mainPrompt !== undefined) {
+    preset.prompts = (preset.prompts as { identifier: string }[]).map((p) =>
+      p.identifier === 'main' ? { ...p, content: scenario.mainPrompt } : p,
+    );
+  }
+  if (scenario.regex?.preset) {
+    preset.extensions = {
+      ...(preset.extensions as object | undefined),
+      regex_scripts: scenario.regex.preset,
+    };
+  }
+  return preset;
 }
 
 /** The chat as SillyTavern stores it: greeting first, then the scenario's history. */
@@ -106,6 +121,7 @@ export function stCard(scenario: Scenario) {
       fav: false,
       world: '',
       depth_prompt: { prompt: '', depth: 4, role: 'system' },
+      ...(scenario.regex?.character ? { regex_scripts: scenario.regex.character } : {}),
       ...c.extensions,
     },
   };
@@ -144,18 +160,66 @@ function chatJsonl(scenario: Scenario): string {
       is_system: !!m.hidden,
       send_date: SEND_DATE,
       mes: m.mes,
-      extra: {},
+      extra: { ...(m.reasoning ? { reasoning: m.reasoning } : {}), ...m.extra },
     };
     if (!m.user) {
       Object.assign(message, {
         swipe_id: 0,
         swipes: [m.mes],
-        swipe_info: [{ send_date: SEND_DATE, extra: {} }],
+        swipe_info: [{ send_date: SEND_DATE, extra: message.extra }],
       });
     }
     return message;
   });
   return [header, ...lines].map((line) => JSON.stringify(line)).join('\n');
+}
+
+const findTemplate = (list: StTemplates[keyof StTemplates], name: string) => {
+  const template = list.find((t) => t.name === name);
+  if (!template) throw new Error(`no SillyTavern template named ${name}`);
+  return template.data;
+};
+
+/**
+ * A Text Completion scenario's SillyTavern settings: `textgenerationwebui_settings`, the formatting
+ * templates and the power user options, as both sides of the comparison use them.
+ */
+export function scenarioTextSettings(scenario: Scenario, templates: StTemplates, mockOrigin: string) {
+  const text = scenario.text!;
+  const type = getTextgenType(text.type);
+  const preset = text.preset ? findTemplate(templates.textgen, text.preset) : {};
+  const settings: Record<string, unknown> = {
+    ...preset,
+    preset: text.preset ?? 'Default',
+    type: text.type,
+    server_urls: type?.server ? {} : { [text.type]: mockOrigin },
+    streaming: false,
+    ...(type?.modelSetting ? { [type.modelSetting]: scenarioModel(scenario) } : {}),
+    ...text.settings,
+  };
+  const instruct = text.instruct
+    ? { ...findTemplate(templates.instruct, text.instruct.name), ...text.instruct.overrides }
+    : undefined;
+  const contextName = text.context?.name ?? 'Default';
+  const context = { ...findTemplate(templates.context, contextName), ...text.context?.overrides };
+  const sysprompt = {
+    name: 'Neutral - Chat',
+    content: "Write {{char}}'s next reply in a fictional chat between {{char}} and {{user}}.",
+    post_history: '',
+    ...text.sysprompt,
+    enabled: text.sysprompt?.enabled ?? true,
+  };
+  return {
+    settings,
+    instruct,
+    instructName: text.instruct?.name,
+    context,
+    contextName,
+    sysprompt,
+    maxContext: text.maxContext ?? 8192,
+    maxResponse: text.maxResponse ?? 300,
+    power: { token_padding: 64, ...text.power },
+  };
 }
 
 /**
@@ -168,6 +232,7 @@ export function writeStData(
   baseSettings: Record<string, unknown>,
   defaultPreset: Record<string, unknown>,
   mockUrl: string,
+  templates?: StTemplates,
 ) {
   const user = join(dataRoot, 'default-user');
   const avatar = `${scenario.card.name}.png`;
@@ -177,6 +242,10 @@ export function writeStData(
 
   writeFileSync(join(user, 'characters', avatar), cardPng(stCard(scenario)));
   writeFileSync(join(user, 'chats', scenario.card.name, `${CHAT_NAME}.jsonl`), chatJsonl(scenario));
+  for (const [path, base64] of Object.entries(scenario.files ?? {})) {
+    mkdirSync(join(user, dirname(path)), { recursive: true });
+    writeFileSync(join(user, path), Buffer.from(base64, 'base64'));
+  }
   for (const [name, entries] of Object.entries(scenario.worldInfo?.books ?? {})) {
     const book = { entries: Object.fromEntries(entries.map((e) => [String(e.uid), e])) };
     writeFileSync(join(user, 'worlds', `${name}.json`), JSON.stringify(book, null, 2));
@@ -186,25 +255,31 @@ export function writeStData(
   const oai: Record<string, unknown> = { ...(baseSettings.oai_settings as Record<string, unknown>) };
   for (const [key, value] of Object.entries(preset)) oai[PRESET_TO_SETTINGS[key] ?? key] = value;
   const provider = scenario.provider ?? 'custom';
-  const model = defaultModels[provider];
+  const source = stSources[provider];
   Object.assign(oai, {
     preset_settings_openai: 'Default',
     chat_completion_source: provider,
     stream_openai: false,
+    [source.modelSetting]: scenarioModel(scenario),
+    ...scenario.sourceSettings,
   });
-  if (provider === 'custom') Object.assign(oai, { custom_url: mockUrl, custom_model: model });
+  if (provider === 'custom') Object.assign(oai, { custom_url: mockUrl });
   // Claude and Google go through a reverse proxy. SillyTavern applies the selected proxy preset
   // over `reverse_proxy` when it loads, so the proxy is defined as a preset.
   let proxy: { name: string; url: string; password: string } | undefined;
-  if (provider === 'claude') {
-    Object.assign(oai, { claude_model: model });
-    proxy = { name: 'st-diff', url: mockUrl, password: 'st-diff' };
-  }
-  if (provider === 'makersuite') {
-    Object.assign(oai, { google_model: model });
+  if (provider === 'claude') proxy = { name: 'st-diff', url: mockUrl, password: 'st-diff' };
+  if (provider === 'makersuite')
     proxy = { name: 'st-diff', url: new URL(mockUrl).origin, password: 'st-diff' };
-  }
   if (proxy) Object.assign(oai, { reverse_proxy: proxy.url, proxy_password: proxy.password });
+  // Other sources call their real host (resolved to the mock) with a key from secrets.json.
+  const secretKey = scenario.text ? stTextSecrets[scenario.text.type] : source.secret;
+  const secrets = {
+    _migrated: true,
+    ...(secretKey
+      ? { [secretKey]: [{ id: 'st-diff', value: 'st-diff-key', label: 'st-diff', active: true }] }
+      : {}),
+  };
+  writeFileSync(join(user, 'secrets.json'), JSON.stringify(secrets, null, 2));
 
   const persona = scenarioPersona(scenario);
   const powerUser = { ...(baseSettings.power_user as Record<string, unknown>) };
@@ -228,26 +303,67 @@ export function writeStData(
     persona_description_lorebook: '',
     default_persona: null,
     auto_load_chat: false,
+    custom_stopping_strings: JSON.stringify(scenario.stoppingStrings ?? []),
+    custom_stopping_strings_macro: true,
+    reasoning: {
+      name: 'st-diff',
+      auto_parse: false,
+      auto_expand: false,
+      show_hidden: false,
+      ...stReasoningDefaults,
+      ...scenario.reasoning,
+    },
   });
+  let textSettings: Record<string, unknown> = {};
+  if (scenario.text) {
+    const tc = scenarioTextSettings(scenario, templates!, new URL(mockUrl).origin);
+    Object.assign(powerUser, {
+      instruct: tc.instruct
+        ? { ...tc.instruct, enabled: true, preset: tc.instructName }
+        : { ...(powerUser.instruct as object), enabled: false },
+      context: { ...tc.context, preset: tc.contextName },
+      sysprompt: tc.sysprompt,
+      // SillyTavern keeps these context template options at the top level.
+      always_force_name2: tc.context.always_force_name2 ?? true,
+      trim_sentences: tc.context.trim_sentences ?? false,
+      single_line: tc.context.single_line ?? false,
+      // The estimate both sides share (no tokenizer server).
+      tokenizer: 0,
+      ...tc.power,
+    });
+    textSettings = {
+      main_api: 'textgenerationwebui',
+      max_context: tc.maxContext,
+      amount_gen: tc.maxResponse,
+      textgenerationwebui_settings: tc.settings,
+    };
+  }
+  const regex = scenario.regex;
+  const extensionSettings = {
+    ...(baseSettings.extension_settings as Record<string, unknown>),
+    regex: regex?.global ?? [],
+    character_allowed_regex: regex?.characterAllowed ? [avatar] : [],
+    preset_allowed_regex: regex?.presetAllowed ? { openai: ['Default'] } : {},
+  };
 
+  // Questions SillyTavern asks once, marked as answered so that nothing waits for a click: the
+  // "Connecting To Proxy" confirmation and the "allow embedded regex scripts" prompts.
+  const accountStorage: Record<string, unknown> = {
+    ...(baseSettings.accountStorage as Record<string, unknown> | undefined),
+    [`AlertRegex_${avatar}`]: 'true',
+    AlertRegex_openai_Default: 'true',
+  };
+  if (proxy) accountStorage[`Proxy_SkipConfirm_${stringHash(proxy.url)}`] = 'true';
   const settings = {
     ...baseSettings,
-    ...(proxy
-      ? {
-          proxies: [{ name: 'None', url: '', password: '' }, proxy],
-          selected_proxy: proxy,
-          // Skip the "Connecting To Proxy" confirmation, as if it had been answered before.
-          accountStorage: {
-            ...(baseSettings.accountStorage as Record<string, unknown> | undefined),
-            [`Proxy_SkipConfirm_${stringHash(proxy.url)}`]: 'true',
-          },
-        }
-      : {}),
+    accountStorage,
+    ...(proxy ? { proxies: [{ name: 'None', url: '', password: '' }, proxy], selected_proxy: proxy } : {}),
     firstRun: false,
     main_api: 'openai',
     username: persona.name,
     user_avatar: 'user-default.png',
     power_user: powerUser,
+    extension_settings: extensionSettings,
     oai_settings: oai,
     world_info_settings: {
       ...(baseSettings.world_info_settings as Record<string, unknown>),
@@ -255,6 +371,7 @@ export function writeStData(
       ...scenario.worldInfo?.settings,
       world_info: { globalSelect: scenario.worldInfo?.global ?? [] },
     },
+    ...textSettings,
   };
   writeFileSync(join(user, 'settings.json'), JSON.stringify(settings, null, 2));
 }

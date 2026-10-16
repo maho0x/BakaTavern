@@ -128,6 +128,25 @@ pub fn upsert(
     Ok(get_by_name(conn, user_id, kind, name)?.expect("row was just written"))
 }
 
+/// Creates the presets whose kind and name are not taken yet, leaving existing ones alone. Returns
+/// the created presets.
+pub fn seed(
+    conn: &mut Connection,
+    user_id: &str,
+    presets: &[(String, String, Value)],
+) -> Result<Vec<PresetInfo>> {
+    let tx = conn.transaction()?;
+    let mut created = Vec::new();
+    for (kind, name, data) in presets {
+        validate(kind, name)?;
+        if get_by_name(&tx, user_id, kind, name.trim())?.is_none() {
+            created.push(upsert(&tx, user_id, kind, name, data)?.info);
+        }
+    }
+    tx.commit()?;
+    Ok(created)
+}
+
 pub fn update(
     conn: &Connection,
     user_id: &str,
@@ -143,7 +162,7 @@ pub fn update(
     if let Some(other) = get_by_name(conn, user_id, &current.info.kind, name)?
         && other.info.id != id
     {
-        return Err(StoreError::Invalid(format!(
+        return Err(StoreError::Exists(format!(
             "a preset named {name:?} already exists"
         )));
     }

@@ -6,6 +6,10 @@
 import type {
   AuthStatus,
   Bootstrap,
+  BranchChat,
+  Branched,
+  PromptLog,
+  PutPrompt,
   Character,
   CharacterImportResult,
   CharacterSummary,
@@ -28,6 +32,8 @@ import type {
   PresetInfo,
   SecretInfo,
   SettingsDoc,
+  StExportNames,
+  StImportReport,
   Tag,
   UpdateChat,
   UpdateSecret,
@@ -195,8 +201,15 @@ export class BakaClient {
   getChat = (id: string) => this.request<Chat>('GET', `/api/chats/${id}`);
   updateChat = (id: string, patch: UpdateChat) => this.request<Chat>('PATCH', `/api/chats/${id}`, patch);
   deleteChat = (id: string) => this.request<void>('DELETE', `/api/chats/${id}`);
-  branchChat = (id: string, upTo: number, title?: string) =>
-    this.request<Chat>('POST', `/api/chats/${id}/branch`, { upTo, title });
+  /** Copies a chat up to a message: a branch, or with `checkpoint` a checkpoint the message links to. */
+  branchChat = (id: string, body: BranchChat) =>
+    this.request<Branched>('POST', `/api/chats/${id}/branch`, body);
+  /** Records what a generation sent, for the prompt viewer. */
+  putPrompt = (chatId: string, body: PutPrompt) =>
+    this.request<void>('POST', `/api/chats/${chatId}/prompts`, body);
+  /** The prompt of the generation that started at `startedAt`, and the one before it. */
+  getPrompt = (chatId: string, startedAt: string) =>
+    this.request<PromptLog>('GET', `/api/chats/${chatId}/prompts?startedAt=${encodeURIComponent(startedAt)}`);
   importChat = (file: File | Blob, characterId: string) =>
     this.#upload<Chat>('/api/chats/import', [file], { characterId });
   chatExportUrl = (id: string, format: 'jsonl' | 'txt' = 'jsonl') =>
@@ -252,12 +265,27 @@ export class BakaClient {
     this.#upload<Lorebook>('/api/lorebooks/import', [file], name ? { name } : {});
   lorebookExportUrl = (id: string) => this.url(`/api/lorebooks/${id}/export`);
 
+  // Moving from SillyTavern
+  /** Imports a SillyTavern backup zip (its user folder); keys only when `secrets` is set. */
+  importSillyTavern = (file: File | Blob, options: { secrets?: boolean } = {}) =>
+    this.#upload<StImportReport>('/api/import/st', [file], options.secrets ? { secrets: 'true' } : {});
+  /** File names the export gives characters and personas (for building `settings.json`). */
+  stExportNames = () => this.request<StExportNames>('GET', '/api/export/st/names');
+  /** Everything as a SillyTavern user folder (zip), with the given `settings.json`. */
+  exportSillyTavern = async (settings: Record<string, unknown>) =>
+    (
+      await this.#raw('POST', '/api/export/st', json({ settings }), { 'content-type': 'application/json' })
+    ).blob();
+
   // Presets
   listPresets = (kind?: string) =>
     this.request<PresetInfo[]>('GET', `/api/presets${kind ? `?kind=${encodeURIComponent(kind)}` : ''}`);
   getPreset = (id: string) => this.request<Preset>('GET', `/api/presets/${id}`);
   upsertPreset = (kind: string, name: string, data: Record<string, unknown>) =>
     this.request<Preset>('PUT', '/api/presets', { kind, name, data });
+  /** Adds the presets whose kind and name are not taken yet; returns the created ones. */
+  seedPresets = (presets: { kind: string; name: string; data: Record<string, unknown> }[]) =>
+    this.request<PresetInfo[]>('POST', '/api/presets/seed', { presets });
   updatePreset = (id: string, patch: { name?: string; data?: Record<string, unknown>; rev?: number }) =>
     this.request<Preset>('PATCH', `/api/presets/${id}`, patch);
   deletePreset = (id: string) => this.request<void>('DELETE', `/api/presets/${id}`);

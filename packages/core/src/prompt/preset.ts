@@ -85,10 +85,36 @@ export interface ChatCompletionPreset {
   reasoning_effort: string;
   verbosity: string;
   show_thoughts: boolean;
+  /** Ask providers with built-in web search to use it. */
+  enable_web_search: boolean;
   function_calling: boolean;
   media_inlining: boolean;
+  /** `auto`, `low` or `high`: the detail images are sent with. */
+  inline_image_quality: string;
+  /** The logit bias list in use (SillyTavern keeps the lists in its settings, `bias_presets`). */
+  bias_preset_selected: string;
   [extra: string]: unknown;
 }
+
+/** A logit bias entry: text (or token ids as `[1, 2]`) and its bias. */
+export interface LogitBiasEntry {
+  id: string;
+  text: string;
+  value: number;
+}
+
+export const DEFAULT_BIAS_LIST = 'Default (none)';
+
+/** SillyTavern's built-in logit bias lists (`default_bias_presets`). */
+export const stDefaultBiasLists: Record<string, LogitBiasEntry[]> = {
+  [DEFAULT_BIAS_LIST]: [],
+  'Anti-bond': [
+    { id: '22154f79-dd98-41bc-8e34-87015d6a0eaf', text: ' bond', value: -50 },
+    { id: '8ad2d5c4-d8ef-49e4-bc5e-13e7f4690e0f', text: ' future', value: -50 },
+    { id: '52a4b280-0956-4940-ac52-4111f83e4046', text: ' bonding', value: -50 },
+    { id: 'e63037c7-c9d1-4724-ab2d-7756008b433b', text: ' connection', value: -25 },
+  ],
+};
 
 export const defaultPrompts: PromptDefinition[] = [
   {
@@ -180,8 +206,11 @@ export function defaultChatCompletionPreset(): ChatCompletionPreset {
     reasoning_effort: 'auto',
     verbosity: 'auto',
     show_thoughts: true,
+    enable_web_search: false,
     function_calling: false,
     media_inlining: true,
+    inline_image_quality: 'auto',
+    bias_preset_selected: DEFAULT_BIAS_LIST,
   };
 }
 

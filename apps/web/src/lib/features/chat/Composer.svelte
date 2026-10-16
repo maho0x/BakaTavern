@@ -7,7 +7,30 @@
   import { errorText, ui } from '../../state/ui.svelte.ts';
 
   let textarea = $state<HTMLTextAreaElement>();
+  let fileInput = $state<HTMLInputElement>();
   let menuOpen = $state(false);
+  let dragging = $state(false);
+
+  /** Images pasted into the box are attached; text pastes as usual. */
+  function onPaste(event: ClipboardEvent) {
+    const files = [...(event.clipboardData?.files ?? [])];
+    if (!files.length) return;
+    event.preventDefault();
+    chat.attach(files);
+  }
+
+  function onDrop(event: DragEvent) {
+    dragging = false;
+    const files = [...(event.dataTransfer?.files ?? [])];
+    if (!files.length) return;
+    event.preventDefault();
+    chat.attach(files);
+  }
+
+  const sizeText = (bytes: number) =>
+    bytes < 1024 * 1024
+      ? `${Math.max(1, Math.round(bytes / 1024))} KB`
+      : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   const prefs = $derived(settings.get('chat', chatDefaults));
   const busy = $derived(!!chat.generation);
 
@@ -43,8 +66,38 @@
   }
 </script>
 
-<form class="composer" onsubmit={(e) => (e.preventDefault(), send())}>
-  <div class="box">
+<form
+  class="composer"
+  onsubmit={(e) => (e.preventDefault(), send())}
+  ondragover={(e) => {
+    if (e.dataTransfer?.types.includes('Files')) {
+      e.preventDefault();
+      dragging = true;
+    }
+  }}
+  ondragleave={() => (dragging = false)}
+  ondrop={onDrop}
+>
+  {#if chat.attachments.length}
+    <ul class="pending" aria-label={t('chat.attachments')}>
+      {#each chat.attachments as item (item.id)}
+        <li>
+          {#if item.preview}<img src={item.preview} alt="" />{:else}<span class="kind"
+              ><Icon name={item.kind === 'file' ? 'file' : 'image'} size={16} /></span
+            >{/if}
+          <span class="name">{item.file.name}</span>
+          <span class="size">{sizeText(item.file.size)}</span>
+          <button
+            type="button"
+            class="icon-btn small"
+            aria-label={t('chat.detach', { name: item.file.name })}
+            onclick={() => chat.detach(item.id)}><Icon name="close" size={14} /></button
+          >
+        </li>
+      {/each}
+    </ul>
+  {/if}
+  <div class="box" class:dragging>
     <div class="more">
       <button
         type="button"
@@ -70,13 +123,33 @@
         </div>
       {/if}
     </div>
+    <button
+      type="button"
+      class="icon-btn"
+      title={t('chat.attach')}
+      aria-label={t('chat.attach')}
+      disabled={busy}
+      onclick={() => fileInput?.click()}><Icon name="clip" /></button
+    >
+    <input
+      bind:this={fileInput}
+      type="file"
+      multiple
+      hidden
+      accept="image/*,video/*,audio/*,text/*,.md,.json,.jsonl,.csv,.tsv,.xml,.yaml,.yml,.html,.htm,.srt,.vtt,.log"
+      onchange={(e) => {
+        chat.attach(e.currentTarget.files ?? []);
+        e.currentTarget.value = '';
+      }}
+    />
     <textarea
       bind:this={textarea}
       bind:value={chat.draft}
       rows="1"
       placeholder={t('chat.placeholder', { name: chat.userName })}
       aria-label={t('chat.placeholder', { name: chat.userName })}
-      onkeydown={onKeydown}></textarea>
+      onkeydown={onKeydown}
+      onpaste={onPaste}></textarea>
     {#if busy}
       <button
         type="button"
@@ -110,8 +183,57 @@
     border-radius: 14px;
     background: var(--bt-surface);
   }
-  .box:focus-within {
+  .box:focus-within,
+  .box.dragging {
     border-color: color-mix(in oklch, var(--bt-accent) 60%, var(--bt-line));
+  }
+  .box.dragging {
+    background: color-mix(in oklch, var(--bt-accent) 6%, var(--bt-surface));
+  }
+  .pending {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    max-width: var(--bt-chat-width);
+    margin: 0 auto 0.4rem;
+    padding: 0;
+    list-style: none;
+  }
+  .pending li {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    max-width: 16rem;
+    padding: 0.25rem 0.25rem 0.25rem 0.3rem;
+    border: 1px solid var(--bt-line);
+    border-radius: var(--bt-radius);
+    background: var(--bt-surface);
+    font-size: var(--bt-size-sm);
+  }
+  .pending img,
+  .pending .kind {
+    width: 2rem;
+    height: 2rem;
+    flex: none;
+    border-radius: var(--bt-radius-sm);
+    object-fit: cover;
+  }
+  .pending .kind {
+    display: grid;
+    place-items: center;
+    background: var(--bt-surface-2);
+    color: var(--bt-ink-muted);
+  }
+  .pending .name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .pending .size {
+    flex: none;
+    color: var(--bt-ink-faint);
+    font-size: var(--bt-size-xs);
   }
   textarea {
     flex: 1;

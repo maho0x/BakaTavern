@@ -162,7 +162,14 @@ export const providers: ProviderDefinition[] = [
       anonymous: 'https://text.pollinations.ai/v1',
     },
   }),
-  openaiCompat({ id: 'cohere', name: 'Cohere', baseUrl: 'https://api.cohere.ai/compatibility/v1' }),
+  // SillyTavern uses Cohere's own v2 chat API; models are listed by v1.
+  openaiCompat({
+    id: 'cohere',
+    name: 'Cohere',
+    family: 'cohere',
+    baseUrl: 'https://api.cohere.ai/v2',
+    modelsPath: '../v1/models',
+  }),
   openaiCompat({ id: 'ai21', name: 'AI21', baseUrl: 'https://api.ai21.com/studio/v1' }),
 ];
 
@@ -186,5 +193,7 @@ export function providerOrigins(provider: ProviderDefinition, baseUrl?: string):
 
 /** Joins a base URL and a path without doubling slashes. */
 export function joinUrl(base: string, path: string): string {
+  // `../v1/models` and the like resolve against the base.
+  if (path.startsWith('.')) return new URL(path, `${base.replace(/\/+$/, '')}/`).toString();
   return `${base.replace(/\/+$/, '')}/${path.replace(/^\/+/, '')}`;
 }

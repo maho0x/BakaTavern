@@ -322,10 +322,9 @@ function filterByInclusionGroups(
   }
   if (!Object.keys(groups).length) return;
 
-  const remove = (entry: ScanEntry) => {
-    const i = newEntries.indexOf(entry);
-    if (i >= 0) newEntries.splice(i, 1);
-  };
+  // Exactly as SillyTavern: removing an entry that already lost in another of its groups
+  // finds no index, and `splice(-1, 1)` then drops the last entry instead.
+  const remove = (entry: ScanEntry) => newEntries.splice(newEntries.indexOf(entry), 1);
   const removeAllBut = (group: ScanEntry[], keep: ScanEntry | null) =>
     group.filter((e) => e !== keep).forEach(remove);
 

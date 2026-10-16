@@ -69,6 +69,12 @@ impl From<StoreError> for ApiError {
                 )
             },
             StoreError::Invalid(msg) => Self::bad_request(msg),
+            StoreError::Exists(msg) => Self::new(StatusCode::CONFLICT, "exists", msg),
+            other if other.is_unique_violation() => Self::new(
+                StatusCode::CONFLICT,
+                "exists",
+                "an item with this name already exists",
+            ),
             other => Self::internal(other),
         }
     }

@@ -43,16 +43,41 @@ pub fn sniff_mime(bytes: &[u8]) -> &'static str {
         ] => "image/avif",
         [b'P', b'K', 3, 4, ..] => "application/zip",
         [b'%', b'P', b'D', b'F', ..] => "application/pdf",
-        [b'I', b'D', b'3', ..] | [0xff, 0xfb, ..] => "audio/mpeg",
+        [b'I', b'D', b'3', ..] | [0xff, 0xfb | 0xf3 | 0xf2, ..] => "audio/mpeg",
+        [0xff, 0xf1 | 0xf9, ..] => "audio/aac",
         [b'O', b'g', b'g', b'S', ..] => "audio/ogg",
+        [b'f', b'L', b'a', b'C', ..] => "audio/flac",
+        [
+            b'R',
+            b'I',
+            b'F',
+            b'F',
+            _,
+            _,
+            _,
+            _,
+            b'W',
+            b'A',
+            b'V',
+            b'E',
+            ..,
+        ] => "audio/wav",
+        [_, _, _, _, b'f', b't', b'y', b'p', b'M', b'4', b'A', ..] => "audio/mp4",
         [_, _, _, _, b'f', b't', b'y', b'p', ..] => "video/mp4",
-        _ if std::str::from_utf8(&bytes[..bytes.len().min(512)]).is_ok() => {
-            match bytes.iter().find(|b| !b.is_ascii_whitespace()) {
-                Some(b'{') | Some(b'[') => "application/json",
-                _ => "text/plain",
-            }
-        }
+        [0x1a, 0x45, 0xdf, 0xa3, ..] => "video/webm",
+        _ if looks_like_text(bytes) => match bytes.iter().find(|b| !b.is_ascii_whitespace()) {
+            Some(b'{') | Some(b'[') => "application/json",
+            _ => "text/plain",
+        },
         _ => "application/octet-stream",
+    }
+}
+
+/// UTF-8 in the first 512 bytes (a character cut off at the end of the sample is fine).
+fn looks_like_text(bytes: &[u8]) -> bool {
+    match std::str::from_utf8(&bytes[..bytes.len().min(512)]) {
+        Ok(_) => true,
+        Err(e) => e.error_len().is_none(),
     }
 }
 
@@ -114,6 +139,11 @@ mod tests {
         assert_eq!(sniff_mime(&bt_formats::png::placeholder()), "image/png");
         assert_eq!(sniff_mime(b"  {\"a\":1}"), "application/json");
         assert_eq!(sniff_mime(b"PK\x03\x04rest"), "application/zip");
+        assert_eq!(sniff_mime(b"\x1a\x45\xdf\xa3webm"), "video/webm");
+        assert_eq!(sniff_mime(b"RIFF\0\0\0\0WAVEfmt "), "audio/wav");
+        // A Chinese character cut off by the 512-byte sample is still text.
+        let text = "咖啡".repeat(200);
+        assert_eq!(sniff_mime(text.as_bytes()), "text/plain");
         assert_eq!(
             sniff_mime(&[0u8, 159, 146, 150]),
             "application/octet-stream"

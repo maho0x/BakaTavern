@@ -16,6 +16,7 @@ pub struct Config {
     pub auth: AuthSection,
     pub network: NetworkSection,
     pub limits: LimitsSection,
+    pub tokenizers: TokenizersSection,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -62,14 +63,28 @@ pub struct NetworkSection {
     pub read_timeout_secs: u64,
 }
 
+/// Tokenizer files for exact token counts (Llama 3, Claude, Gemma, ...), downloaded once.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct TokenizersSection {
+    /// Download missing tokenizer files; when off, only files placed in `cache/tokenizers` are used.
+    pub download: bool,
+    /// Prefix put before the download URLs (a GitHub mirror, e.g. `https://ghfast.top/`).
+    pub mirror: String,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct LimitsSection {
     pub max_upload_mb: u64,
+    /// Largest SillyTavern backup the import accepts.
+    pub max_import_mb: u64,
     /// Largest upstream response a generation job will buffer.
     pub max_job_mb: u64,
     /// Days to keep finished generation jobs that no client acknowledged.
     pub job_retention_days: u64,
+    /// Days the prompts of generations are kept for the prompt viewer (0 keeps them).
+    pub prompt_log_days: u64,
 }
 
 impl Default for Config {
@@ -80,6 +95,7 @@ impl Default for Config {
             auth: AuthSection::default(),
             network: NetworkSection::default(),
             limits: LimitsSection::default(),
+            tokenizers: TokenizersSection::default(),
         }
     }
 }
@@ -116,12 +132,23 @@ impl Default for NetworkSection {
     }
 }
 
+impl Default for TokenizersSection {
+    fn default() -> Self {
+        Self {
+            download: true,
+            mirror: String::new(),
+        }
+    }
+}
+
 impl Default for LimitsSection {
     fn default() -> Self {
         Self {
             max_upload_mb: 200,
+            max_import_mb: 4096,
             max_job_mb: 16,
             job_retention_days: 7,
+            prompt_log_days: 30,
         }
     }
 }
@@ -151,6 +178,11 @@ read_timeout_secs = 600
 max_upload_mb = 200
 max_job_mb = 16
 job_retention_days = 7
+prompt_log_days = 30  # how long the prompt viewer keeps what each generation sent (0 = forever)
+
+[tokenizers]
+download = true      # fetch tokenizer files (Llama 3, Claude, Gemma ...) from GitHub on first use
+mirror = ""          # prefix for the download URLs, e.g. "https://ghfast.top/"
 "#;
 
 impl Config {
@@ -226,6 +258,10 @@ impl Config {
 
     pub fn key_path(&self) -> PathBuf {
         self.data_dir.join("secret.key")
+    }
+
+    pub fn tokenizers_dir(&self) -> PathBuf {
+        self.data_dir.join("cache").join("tokenizers")
     }
 }
 

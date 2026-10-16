@@ -23,6 +23,9 @@ import {
   type GenerationType,
 } from './types.ts';
 import { stringFormat } from '../util/text.ts';
+import { imageTokenCost, TOKENS_PER_IMAGE, type MediaAttachment, type MediaInlining } from './media.ts';
+import type { HistoryPrompt } from './messages.ts';
+import { toolsForRequest, ToolReasoningMode, type ToolDefinition, type ToolInvocation } from '../tools.ts';
 
 /** Counts the tokens of one message (OpenAI accounting incl. per-message overhead). */
 export type MessageTokenCounter = (message: ChatMessage) => number | Promise<number>;
@@ -51,7 +54,7 @@ export interface ChatCompletionInput {
   /** Persona description when its position is "in prompt" (otherwise empty). */
   personaDescription: string;
   /** Chat history in chronological order, already in message form (see `toPromptMessages`). */
-  messages: ChatMessage[];
+  messages: HistoryPrompt[];
   /** Example dialogue blocks (see `examplesToMessages`). */
   messageExamples: ChatMessage[][];
   pinExamples: boolean;
@@ -60,6 +63,21 @@ export interface ChatCompletionInput {
   countTokens: MessageTokenCounter;
   /** Whether the provider honours an assistant prefill (Claude). */
   supportsAssistantPrefill: boolean;
+  /** Attachments the model takes inline (none when absent). */
+  media?: MediaInlining;
+  /** Tool calling: whether past calls go into the prompt, and the tools offered this time. */
+  tools?: ToolPromptSettings;
+}
+
+export interface ToolPromptSettings {
+  /** Past tool calls go into the prompt (`isToolCallingSupported`). */
+  canUse: boolean;
+  /** Tools offered with this request (`canPerformToolCalls`); their size is kept free. */
+  offered?: readonly ToolDefinition[];
+  /** Send reasoning signatures back (`isReasoningSignatureSupported`). */
+  includeSignature: boolean;
+  /** Forward reasoning between tool calls (`ToolReasoningMode`). */
+  reasoningMode: string;
 }
 
 export interface PromptPart {
@@ -83,7 +101,8 @@ export interface ChatCompletionResult {
 class PromptMessage {
   identifier: string;
   role: ChatRole;
-  content: string | ChatMessage['content'];
+  /** Undefined for a message that only calls tools (SillyTavern sends no content then). */
+  content: ChatMessage['content'] | undefined;
   name?: string;
   tokens = 0;
   signature?: string;
@@ -97,7 +116,7 @@ class PromptMessage {
   ) {
     this.identifier = identifier;
     this.role = role ?? 'system';
-    this.content = content ?? '';
+    this.content = content;
   }
 
   static async create(
@@ -115,13 +134,76 @@ class PromptMessage {
 
   async setName(name: string, count: MessageTokenCounter): Promise<void> {
     this.name = name;
-    this.tokens = await count({ role: this.role, content: this.content, name });
+    this.tokens = await count({ role: this.role, content: this.content as ChatMessage['content'], name });
+  }
+
+  /** Records tool calls on this (assistant) message (`setToolCalls`). */
+  async setToolCalls(
+    invocations: readonly ToolInvocation[],
+    includeSignature: boolean,
+    includeReasoning: boolean,
+    count: MessageTokenCounter,
+  ): Promise<void> {
+    this.tool_calls = invocations.map((i) => ({
+      id: i.id,
+      type: 'function',
+      function: { arguments: i.parameters, name: i.name },
+      ...(includeSignature && i.signature ? { signature: i.signature } : {}),
+    }));
+    const fallback = invocations.find(
+      (i) => typeof i.reasoning === 'string' && i.reasoning.length > 0,
+    )?.reasoning;
+    this.reasoning = includeReasoning && fallback ? fallback : undefined;
+    this.tokens = await count({
+      role: this.role,
+      tool_calls: JSON.stringify(this.tool_calls),
+      ...(this.reasoning ? { reasoning: this.reasoning } : {}),
+    } as unknown as ChatMessage);
+  }
+
+  /** The content as parts (`ensureContentIsArray`): text first, then inlined media. */
+  #parts(): Exclude<ChatMessage['content'], string> {
+    if (!Array.isArray(this.content))
+      this.content = typeof this.content === 'string' ? [{ type: 'text', text: this.content }] : [];
+    return this.content as Exclude<ChatMessage['content'], string>;
+  }
+
+  /** Inlines an attachment the model accepts (`addImage` / `addVideo` / `addAudio`). */
+  async addMedia(item: MediaAttachment, media: MediaInlining): Promise<void> {
+    const type = item.type ?? 'image';
+    if (type === 'image' && media.image) {
+      const parts = this.#parts();
+      const image = await media.resolver.image(item.url, media.compress).catch(() => null);
+      if (!image) return;
+      parts.push({ type: 'image_url', image_url: { url: image.dataUrl, detail: media.quality } });
+      try {
+        this.tokens += imageTokenCost(image.width, image.height, media.quality);
+      } catch {
+        this.tokens += TOKENS_PER_IMAGE;
+      }
+    }
+    if (type === 'video' && media.video) {
+      const parts = this.#parts();
+      const video = await media.resolver.video(item.url).catch(() => null);
+      if (!video) return;
+      parts.push({ type: 'video_url', video_url: { url: video.dataUrl, detail: media.quality } });
+      // Gemini's 263 tokens per second; about 40 seconds when the length is unknown.
+      this.tokens += 263 * (video.duration ? Math.ceil(video.duration) : 40);
+    }
+    if (type === 'audio' && media.audio) {
+      const parts = this.#parts();
+      const audio = await media.resolver.audio(item.url).catch(() => null);
+      if (!audio) return;
+      parts.push({ type: 'audio_url', audio_url: { url: audio.dataUrl } });
+      // 32 tokens per second; about five minutes when the length is unknown.
+      this.tokens += 32 * (audio.duration ? Math.ceil(audio.duration) : 300);
+    }
   }
 
   toChat(): ChatMessage {
     return {
       role: this.role,
-      content: this.content,
+      content: this.content as ChatMessage['content'],
       ...(this.name ? { name: this.name } : {}),
       ...(this.tool_calls ? { tool_calls: this.tool_calls } : {}),
       ...(this.role === 'tool' ? { tool_call_id: this.identifier } : {}),
@@ -229,7 +311,7 @@ class Completion {
       if (message.role === 'system' && !message.content) continue;
       if (squash(message) && last && squash(last)) {
         last.content += '\n' + message.content;
-        last.tokens = await count({ role: last.role, content: last.content });
+        last.tokens = await count({ role: last.role, content: last.content as ChatMessage['content'] });
       } else {
         out.push(message);
         last = message;
@@ -441,7 +523,9 @@ export async function buildChatCompletion(input: ChatCompletionInput): Promise<C
   // populateChatCompletion
   const completion = new Completion();
   completion.setBudget(preset.openai_max_context, preset.openai_max_tokens);
-  let messages = input.messages.map((m) => ({ ...m })).reverse() as (ChatMessage & { injected?: boolean })[];
+  let messages = input.messages.map((m) => ({ ...m })).reverse() as (HistoryPrompt & {
+    injected?: boolean;
+  })[];
 
   try {
     const addToCompletion = async (source: string, target: string | null = null) => {
@@ -513,6 +597,12 @@ export async function buildChatCompletion(input: ChatCompletionInput): Promise<C
     }
     for (const prompt of prompts.collection.filter((p) => p?.extension && p.position)) {
       await injectToMain(prompt, prompt.position as 'start' | 'end');
+    }
+
+    // The tools sent with the request take room too.
+    if (input.tools?.offered) {
+      const toolData = JSON.stringify(toolsForRequest(input.tools.offered));
+      completion.reserve(await count({ role: 'user', content: toolData }));
     }
 
     // Continue with prefill: the continued message moves to the end as a prefill.
@@ -618,7 +708,7 @@ interface HistoryArgs {
   input: ChatCompletionInput;
   prompts: PromptList;
   completion: Completion;
-  messages: (ChatMessage & { injected?: boolean })[];
+  messages: (HistoryPrompt & { injected?: boolean })[];
   type: GenerationType;
   count: MessageTokenCounter;
   substitute: (text: string) => string;
@@ -676,6 +766,9 @@ async function populateHistory({
     completion.insert(emptyReplacement, 'chatHistory');
   }
 
+  const tools = input.tools;
+  const reasoningMode = tools?.reasoningMode ?? ToolReasoningMode.DISABLED;
+  const lastUser = messages.findLastIndex((m) => m.role === 'user');
   const pool = [...messages].reverse();
   for (let index = 0; index < pool.length; index++) {
     const source = pool[index]!;
@@ -689,7 +782,48 @@ async function populateHistory({
     if (preset.names_behavior === NamesBehavior.COMPLETION && source.name) {
       await message.setName(isValidName(source.name) ? source.name : sanitizeName(source.name), count);
     }
-    if (source.signature) message.signature = source.signature;
+    if (input.media && source.media?.media.length) {
+      const { media, display, index } = source.media;
+      for (const item of display === 'gallery' ? [media[index]!] : media)
+        await message.addMedia(item, input.media);
+    }
+
+    // A message that records tool calls becomes the call and its results.
+    if (tools?.canUse && Array.isArray(source.invocations)) {
+      const at = messages.indexOf(source);
+      const eligible = reasoningMode !== ToolReasoningMode.DISABLED && at > lastUser;
+      const previousReasoning = eligible ? toolChainReasoning(messages, at, lastUser, reasoningMode) : '';
+      const invocations = source.invocations.map((invocation) => {
+        const clone = { ...invocation };
+        if (!eligible) delete clone.reasoning;
+        else if (previousReasoning && !clone.reasoning) clone.reasoning = previousReasoning;
+        return clone;
+      });
+      const call = await PromptMessage.create(
+        message.role,
+        undefined,
+        `toolCall-${message.identifier}`,
+        count,
+      );
+      const results = await Promise.all(
+        invocations
+          .slice()
+          .reverse()
+          .map((i) => PromptMessage.create('tool', i.result || '[No content]', i.id, count)),
+      );
+      await call.setToolCalls(
+        invocations,
+        tools.includeSignature,
+        reasoningMode !== ToolReasoningMode.DISABLED,
+        count,
+      );
+      if (!completion.canAffordAll([call, ...results])) break;
+      for (const result of results) completion.insert(result, 'chatHistory', 'start');
+      completion.insert(call, 'chatHistory', 'start');
+      continue;
+    }
+
+    if (tools?.includeSignature && source.signature) message.signature = source.signature;
     if (completion.canAfford(message)) completion.insert(message, 'chatHistory', 'start');
     else break;
   }
@@ -704,6 +838,33 @@ async function populateHistory({
     completion.free(continueCollection);
     completion.add(continueCollection, -1);
   }
+}
+
+/** The reasoning of the assistant text a tool call follows (SillyTavern's tool reasoning modes). */
+function toolChainReasoning(
+  messages: readonly (HistoryPrompt & { injected?: boolean })[],
+  at: number,
+  lastUser: number,
+  mode: string,
+): string {
+  const hasText = (m: HistoryPrompt | undefined) =>
+    m?.role === 'assistant' &&
+    !Array.isArray(m.invocations) &&
+    typeof m.content === 'string' &&
+    m.content.trim().length > 0;
+  for (let i = at - 1; i > lastUser; i--) {
+    const candidate = messages[i];
+    if (mode === ToolReasoningMode.ACTIVE_CHAIN) {
+      // Only the reasoning of the text right before the chain of calls.
+      if (candidate?.role === 'tool') continue;
+      if (candidate?.role === 'assistant' && Array.isArray(candidate.invocations)) continue;
+      return hasText(candidate) ? String(candidate!.reasoning ?? '') : '';
+    }
+    if (mode === ToolReasoningMode.SINCE_LAST_USER && hasText(candidate) && candidate!.reasoning) {
+      return String(candidate!.reasoning);
+    }
+  }
+  return '';
 }
 
 async function populateExamples({ input, prompts, completion, count, substitute }: HistoryArgs) {

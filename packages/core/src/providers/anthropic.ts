@@ -1,5 +1,6 @@
 import { PROMPT_PLACEHOLDER, type PromptNames } from '../prompt/post-process.ts';
 import type { ChatMessage, ContentPart } from '../prompt/types.ts';
+import { flattenSchema } from './converters.ts';
 import { joinUrl } from './registry.ts';
 import { SseParser } from './sse.ts';
 import {
@@ -41,6 +42,7 @@ export function convertClaudeMessages(
   prefill: string,
   useSystemPrompt: boolean,
   names: PromptNames,
+  useTools = false,
 ): { messages: ClaudeMessage[]; system: { type: 'text'; text: string }[] } {
   const messages = input.map((m) => ({ ...m }));
   const system: { type: 'text'; text: string }[] = [];
@@ -121,6 +123,16 @@ export function convertClaudeMessages(
     if (last && last.role === m.role) last.content.push(...m.content);
     else merged.push(m);
   }
+  // Without tools in the request, past calls and results become plain text.
+  if (!useTools) {
+    for (const message of merged) {
+      message.content = message.content.map((block): ClaudeBlock => {
+        if (block.type === 'tool_use') return { type: 'text', text: JSON.stringify(block.input) };
+        if (block.type === 'tool_result') return { type: 'text', text: block.content as string };
+        return block;
+      });
+    }
+  }
   return { messages: merged, system };
 }
 
@@ -149,11 +161,13 @@ function thinkingBudget(maxTokens: number, effort: string | undefined, stream: b
 
 export function buildClaudeBody(request: GenerationRequest): Record<string, unknown> {
   const { params, model } = request;
+  const useTools = !!request.tools?.length;
   const converted = convertClaudeMessages(
     request.messages,
     request.assistantPrefill ?? '',
     !!request.useSystemPrompt,
     request.names,
+    useTools,
   );
   const body: Record<string, unknown> = {
     messages: converted.messages,
@@ -166,6 +180,14 @@ export function buildClaudeBody(request: GenerationRequest): Record<string, unkn
     stream: request.stream,
   };
   if (request.useSystemPrompt && converted.system.length) body.system = converted.system;
+  if (useTools) {
+    body.tool_choice = { type: 'auto' };
+    body.tools = request.tools!.map((tool) => ({
+      name: tool.name,
+      description: tool.description,
+      input_schema: flattenSchema(tool.parameters, 'claude'),
+    }));
+  }
   if (limitedSamplingModels.test(model)) {
     if ((params.top_p ?? 1) < 1) delete body.temperature;
     else delete body.top_p;
@@ -208,6 +230,13 @@ export function buildClaudeBody(request: GenerationRequest): Record<string, unkn
   return body;
 }
 
+/** The beta features SillyTavern asks Claude for. */
+function betaHeaders(request: GenerationRequest): string[] {
+  const betas = ['output-128k-2025-02-19', 'context-1m-2025-08-07'];
+  if (request.tools?.length) betas.push('tools-2024-05-16');
+  return betas;
+}
+
 class ClaudeDecoder implements StreamDecoder {
   #sse = new SseParser();
 
@@ -228,6 +257,10 @@ class ClaudeDecoder implements StreamDecoder {
     }
     const type = (json.type as string) ?? event;
     if (type === 'error') return [{ error: errorMessage(json) }];
+    return [{ event: json }, ...this.#deltas(type, json)];
+  }
+
+  #deltas(type: string, json: Record<string, unknown>): StreamDelta[] {
     if (type === 'content_block_delta') {
       const delta = json.delta as Record<string, unknown>;
       if (delta.type === 'text_delta') return [{ text: String(delta.text ?? '') }];
@@ -259,6 +292,7 @@ export const anthropic: ProviderAdapter = {
       headers: {
         'content-type': 'application/json',
         ...request.provider.defaultHeaders,
+        'anthropic-beta': betaHeaders(request).join(','),
         ...request.extraHeaders,
       },
       body: JSON.stringify(buildClaudeBody(request)),

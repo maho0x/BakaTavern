@@ -9,6 +9,7 @@ pub mod lorebooks;
 pub mod messages;
 pub mod personas;
 pub mod presets;
+pub mod prompt_logs;
 pub mod secrets;
 pub mod sessions;
 pub mod settings;

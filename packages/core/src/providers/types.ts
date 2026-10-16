@@ -1,7 +1,8 @@
-import type { ChatMessage } from '../prompt/types.ts';
+import type { ToolDefinition } from '../tools.ts';
+import type { ChatMessage, GenerationType } from '../prompt/types.ts';
 import type { PromptNames } from '../prompt/post-process.ts';
 
-export type ProtocolFamily = 'openai-chat' | 'anthropic' | 'gemini';
+export type ProtocolFamily = 'openai-chat' | 'anthropic' | 'gemini' | 'cohere';
 
 /** How the server attaches a stored key (mirrors the server's `SecretAuth`). */
 export type AuthScheme =
@@ -78,9 +79,19 @@ export interface GenerationRequest {
   /** Claude/Gemini: send leading system messages as the system prompt. */
   useSystemPrompt?: boolean;
   names: PromptNames;
+  /** Generation type: SillyTavern adjusts some parameters per type. */
+  type?: GenerationType;
+  /**
+   * Chat Completion settings with SillyTavern's keys (`temp_openai`, `custom_prompt_post_processing`,
+   * source options). Derived from `params` when missing.
+   */
+  settings?: Record<string, unknown>;
+  /** Custom source: fields added to the body, keys removed from it, extra headers. */
   extraBody?: Record<string, unknown>;
   excludeBody?: string[];
   extraHeaders?: Record<string, string>;
+  /** Function tools offered to the model. */
+  tools?: readonly ToolDefinition[];
 }
 
 /** An HTTP request ready for the server proxy (the secret is attached server-side). */
@@ -102,6 +113,8 @@ export interface StreamDelta {
   error?: string;
   /** Raw usage block, when the provider reports it. */
   usage?: Record<string, unknown>;
+  /** The parsed event itself (tool calls are collected from it). */
+  event?: unknown;
 }
 
 export interface StreamDecoder {

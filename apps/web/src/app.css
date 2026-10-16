@@ -276,6 +276,14 @@
     font-family: var(--bt-font-prose);
     font-size: var(--bt-size-prose);
   }
+  .input.code,
+  .textarea.code {
+    font-family: var(--bt-font-mono);
+    font-size: var(--bt-size-sm);
+  }
+  .textarea.compact {
+    min-height: 0;
+  }
   .input:focus,
   .textarea:focus,
   .select:focus {

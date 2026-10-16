@@ -1,6 +1,6 @@
 # BakaTavern: notes for contributors and coding agents
 
-BakaTavern rewrites SillyTavern (ST) as a Rust server plus a Svelte 5 web app, keeping ST's behavior and data formats. The reference is **SillyTavern 1.19.0**. Milestones (see the roadmap in `README.zh-CN.md`): M1, the chat MVP, is done; M2 is prompt-engine parity (Text Completion, regex, full World Info editor, whole-directory migration).
+BakaTavern rewrites SillyTavern (ST) as a Rust server plus a Svelte 5 web app, keeping ST's behavior and data formats. The reference is **SillyTavern 1.19.0**. Milestones (see the roadmap in `README.zh-CN.md`): M1, the chat MVP, is done; M2, prompt-engine parity (Text Completion, regex, full World Info editor, tokenizers, attachments, tool calling, whole-directory migration), is done but for a few providers; M3 brings group chats, STscript and the plugin API.
 
 ## Architecture rules
 
@@ -15,8 +15,9 @@ BakaTavern rewrites SillyTavern (ST) as a Rust server plus a Svelte 5 web app, k
 ```
 crates/bt-store     SQLite schema, migrations, repositories, content-addressed blobs
 crates/bt-formats   ST formats: PNG/CHARX cards, chat JSONL, lorebooks, dates
-crates/bt-server    axum routes, auth, SSE change events, LLM proxy + durable jobs, embedded web app
-crates/bt-cli       the `bakatavern` binary (serve, passwd)
+crates/bt-server    axum routes, auth, SSE change events, LLM proxy + durable jobs, embedded web app,
+                    SillyTavern folder import/export (st_import.rs, st_export.rs)
+crates/bt-cli       the `bakatavern` binary (serve, passwd, import-st)
 packages/core       domain engine (see rule 1)
 packages/api-client typed HTTP client; types generated from Rust with ts-rs (src/generated)
 apps/web            Svelte 5 SPA (runes, no SvelteKit, no Tailwind; CSS tokens in app.css)
@@ -53,16 +54,22 @@ Playwright needs a Chromium. Where its download is blocked, install one (e.g. De
 - **HTTP API**: JSON errors are `{ "error": { "code", "message", "rev"? } }`. Writes require the `x-bt-client: 1` header (CSRF). Every entity has a `rev` for optimistic concurrency; send it back on updates and handle `409 conflict`. Tabs identify themselves with `x-bt-client-id` (kept per tab in sessionStorage) so they can ignore their own change events.
 - **Schema**: until the first release, `0001_init.sql` may still change; after it, add numbered migration files and never edit applied ones.
 - **Generation jobs**: the client chooses the job id, so Stop works before the provider answers. A finished job must be claimed (`POST /api/llm/jobs/{id}/claim`) before its result is stored, so that several tabs never save the same reply twice.
+- **Prompt logs**: when a generation starts, the web app stores core's `itemizePrompt` result under the chat and the reply's `gen_started` (`POST /api/chats/{id}/prompts`); the prompt viewer reads it back by that key. Nothing BakaTavern-specific is added to messages, so ST exports stay clean.
 - **UI text**: every string goes through `t()`. Add each key to both `apps/web/src/lib/i18n/en.ts` and `zh-CN.ts`. Chinese text uses the community's terms: 角色卡, 世界书, 预设, 作者注释, 人设, 开场白, 思维链.
 - **Insecure contexts**: users open the app over plain HTTP on the LAN, so do not rely on `crypto.randomUUID`, `navigator.clipboard` or other secure-context APIs without a fallback (see `randomId`, `uuidv4`, `copyText`).
 - **Rendering**: message HTML goes through `renderMessage` (marked + DOMPurify) only.
+- **No `eval`**: story strings are rendered by core's interpreter over Handlebars' AST (`prompt/handlebars.ts`, tested against `Handlebars.compile`), so a strict CSP stays possible.
 - **Style**: Prettier (single quotes, width 110) and rustfmt; match the surrounding code's comment density and naming.
 
 ## Prompt parity
 
 `tools/st-diff/src/scenarios.ts` defines scenarios. `pnpm st-diff:record` writes each one as an ST data directory, runs ST 1.19 in Docker, triggers the generation in headless Chromium and stores the request ST sent into `tools/st-diff/baseline/<id>.json`. `pnpm test` then builds the same request with core and requires it to be identical.
 
-When you change anything that affects requests (prompt assembly, World Info, macros, provider bodies), run the parity tests. When you port a new ST feature, add a scenario that exercises it and record its baseline. When a scenario fails, ST's behavior is the reference: read the ST source (`public/scripts/openai.js`, `world-info.js`, `macros/`, `src/endpoints/backends/chat-completions.js`) rather than adjusting the baseline.
+Scenarios with a `text` field use Text Completion: a backend type, settings and SillyTavern's own templates (vendored in `packages/core/src/prompt/st-templates.json`).
+
+Token counts use the tokenizer ST picks for the scenario: for Chat Completion the model's (tiktoken encodings need no files; the others read theirs from `BT_TOKENIZERS_DIR` and otherwise fall back to the estimate, so scenarios that depend on counts use OpenAI-family models), for Text Completion `power.tokenizer` (default 0, the estimate; 1 is GPT-2). Scenarios can add files to ST's user folder (`files`, for attachments) and register function tools in ST (`tools`); the harness reads the same files and passes the mock's model list entry (`mockModelEntry`) as the model info. Backends that can tokenize send ST to the mock's tokenizer (one token per word, `mockTokenIds`), which the harness uses too. ST's UI clamps some settings to its slider ranges, e.g. `openai_max_context` to at least 512; stay inside them.
+
+When you change anything that affects requests (prompt assembly, World Info, macros, provider bodies), run the parity tests. When you port a new ST feature, add a scenario that exercises it and record its baseline. When a scenario fails, ST's behavior is the reference: read the ST source (`public/scripts/openai.js`, `world-info.js`, `macros/`, `src/endpoints/backends/chat-completions.js`; for Text Completion `public/script.js` `Generate()`, `instruct-mode.js`, `power-user.js`, `textgen-settings.js` and `src/endpoints/backends/text-completions.js`) rather than adjusting the baseline. SillyTavern's quirks are kept on purpose (e.g. `Name:Name:` when continuing without instruct mode).
 
 ## Testing expectations
 

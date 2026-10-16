@@ -230,7 +230,49 @@ export function registerBuiltinMacros(registry: MacroRegistry): MacroRegistry {
       return c.env.original;
     },
   });
-  field('systemPrompt', (e) => e.systemPrompt);
+  // System prompt, instruct template and context template (SillyTavern `instruct-macros.js`)
+  field('systemPrompt', (e) => {
+    if (!e.sysprompt) return '';
+    return e.preferCharacterPrompt && e.charPrompt ? e.charPrompt : e.sysprompt.content;
+  });
+  field('defaultSystemPrompt', (e) => e.sysprompt?.content, ['instructSystem', 'instructSystemPrompt']);
+  const instruct = (name: string, aliases: string[], ...keys: string[]) =>
+    field(
+      name,
+      (e) => {
+        if (!e.instruct) return '';
+        for (const key of keys) if (e.instruct[key]) return String(e.instruct[key]);
+        return String(e.instruct[keys.at(-1)!] ?? '');
+      },
+      aliases,
+    );
+  instruct('instructStoryStringPrefix', [], 'story_string_prefix');
+  instruct('instructStoryStringSuffix', [], 'story_string_suffix');
+  instruct('instructUserPrefix', ['instructInput'], 'input_sequence');
+  instruct('instructUserSuffix', [], 'input_suffix');
+  instruct('instructAssistantPrefix', ['instructOutput'], 'output_sequence');
+  instruct('instructAssistantSuffix', ['instructSeparator'], 'output_suffix');
+  instruct('instructSystemPrefix', [], 'system_sequence');
+  instruct('instructSystemSuffix', [], 'system_suffix');
+  instruct(
+    'instructFirstAssistantPrefix',
+    ['instructFirstOutputPrefix'],
+    'first_output_sequence',
+    'output_sequence',
+  );
+  instruct(
+    'instructLastAssistantPrefix',
+    ['instructLastOutputPrefix'],
+    'last_output_sequence',
+    'output_sequence',
+  );
+  instruct('instructStop', [], 'stop_sequence');
+  instruct('instructUserFiller', [], 'user_alignment_message');
+  instruct('instructSystemInstructionPrefix', [], 'last_system_sequence');
+  instruct('instructFirstUserPrefix', ['instructFirstInput'], 'first_input_sequence', 'input_sequence');
+  instruct('instructLastUserPrefix', ['instructLastInput'], 'last_input_sequence', 'input_sequence');
+  field('exampleSeparator', (e) => e.exampleSeparator, ['chatSeparator']);
+  field('chatStart', (e) => e.chatStart);
   field('isMobile', (e) => String(Boolean(e.isMobile)));
   registry.register('charFirstMessage', {
     maxArgs: 1,

@@ -13,6 +13,7 @@ use crate::state::AppState;
 pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/api/presets", routing::get(list).put(upsert))
+        .route("/api/presets/seed", routing::post(seed))
         .route(
             "/api/presets/{id}",
             routing::get(get).patch(update).delete(delete),
@@ -84,6 +85,40 @@ async fn upsert(
         &origin,
     );
     Ok(Json(preset))
+}
+
+#[derive(Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export)]
+pub struct SeedPresets {
+    pub presets: Vec<UpsertPreset>,
+}
+
+/// `POST /api/presets/seed`: adds presets (e.g. SillyTavern's default templates) whose kind and
+/// name are not taken yet. Returns the created ones.
+async fn seed(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    ClientId(origin): ClientId,
+    Json(body): Json<SeedPresets>,
+) -> ApiResult<Json<Vec<PresetInfo>>> {
+    if body.presets.iter().any(|p| !p.data.is_object()) {
+        return Err(ApiError::bad_request("preset data must be a JSON object"));
+    }
+    let user_id = user.id.clone();
+    let presets: Vec<_> = body
+        .presets
+        .into_iter()
+        .map(|p| (p.kind, p.name, p.data))
+        .collect();
+    let created = state
+        .db
+        .write(move |c| presets::seed(c, &user_id, &presets))
+        .await?;
+    if let Some(first) = created.first() {
+        state.notify(&user.id, "preset", "updated", &first.id, None, &origin);
+    }
+    Ok(Json(created))
 }
 
 #[derive(Deserialize, TS)]

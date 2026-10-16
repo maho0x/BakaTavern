@@ -53,6 +53,8 @@ export default defineConfig({
     // Tokenizer vocabularies (o200k/cl100k) are large but lazily loaded.
     chunkSizeWarningLimit: 2100,
   },
+  // Tokenizers run in a module worker that loads its vocabularies as separate chunks.
+  worker: { format: 'es' },
   test: {
     environment: 'jsdom',
   },

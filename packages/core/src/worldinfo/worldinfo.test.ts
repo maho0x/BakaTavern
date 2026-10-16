@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  convertForeignLorebook,
   collectEntries,
   convertCharacterBook,
   createEntry,
@@ -211,5 +212,59 @@ describe('convertCharacterBook', () => {
       ],
     });
     expect(entries[0]).toMatchObject({ uid: 0, key: ['a'], order: 5, position: 0, depth: 7, disable: false });
+  });
+});
+
+describe('foreign lorebooks', () => {
+  it('converts NovelAI, Agnai and RisuAI books', () => {
+    const nai = convertForeignLorebook({
+      lorebookVersion: 5,
+      entries: [
+        {
+          keys: ['tea'],
+          text: 'Tea is hot.',
+          displayName: 'Tea',
+          enabled: true,
+          contextConfig: { budgetPriority: 400 },
+        },
+      ],
+    })!;
+    expect(nai[0]).toMatchObject({
+      uid: 0,
+      key: ['tea'],
+      content: 'Tea is hot.',
+      comment: 'Tea',
+      order: 400,
+      disable: false,
+      addMemo: true,
+    });
+    const agnai = convertForeignLorebook({
+      kind: 'memory',
+      entries: [{ keywords: ['moon'], entry: 'The moon is full.', name: 'Moon', weight: 7, enabled: false }],
+    })!;
+    expect(agnai[0]).toMatchObject({ key: ['moon'], order: 7, disable: true, comment: 'Moon' });
+    const risu = convertForeignLorebook({
+      type: 'risu',
+      data: [
+        {
+          key: 'a, b',
+          secondkey: 'c',
+          comment: 'R',
+          content: 'x',
+          alwaysActive: true,
+          selective: true,
+          insertorder: 3,
+        },
+      ],
+    })!;
+    expect(risu[0]).toMatchObject({
+      key: ['a', 'b'],
+      keysecondary: ['c'],
+      constant: true,
+      selective: true,
+      order: 3,
+      probability: 100,
+    });
+    expect(convertForeignLorebook({ entries: {} })).toBeNull();
   });
 });

@@ -1,0 +1,188 @@
+{
+  "scenario": "tools-claude",
+  "image": "ghcr.io/sillytavern/sillytavern:1.19.0",
+  "recordedAt": "2026-10-16T11:24:20.756Z",
+  "request": {
+    "path": "/v1/messages",
+    "body": {
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Write Aiko's next reply in a fictional chat between Aiko and User."
+            },
+            {
+              "type": "text",
+              "text": "Aiko is a cheerful barista at the Moonlit Café. She remembers every regular by name."
+            },
+            {
+              "type": "text",
+              "text": "cheerful, curious, a little nosy"
+            },
+            {
+              "type": "text",
+              "text": "User walks into the café on a rainy evening."
+            },
+            {
+              "type": "text",
+              "text": "[Example Chat]"
+            },
+            {
+              "type": "text",
+              "text": "User: Hi!"
+            },
+            {
+              "type": "text",
+              "text": "Aiko: Oh, hello there! The usual?"
+            },
+            {
+              "type": "text",
+              "text": "[Example Chat]"
+            },
+            {
+              "type": "text",
+              "text": "User: What do you recommend?"
+            },
+            {
+              "type": "text",
+              "text": "Aiko: *She taps the menu.* Matcha latte, always."
+            },
+            {
+              "type": "text",
+              "text": "[Start a new Chat]"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "*Aiko looks up from the counter.* Welcome in, User! Rough weather out there?"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Hi Aiko. It is pouring outside."
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "*She slides a towel across the counter.* Dry off first. Tea or coffee?"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Roll a d20 for my luck, and is it still raining?"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "tool_use",
+              "id": "call_dice_1",
+              "name": "roll_dice",
+              "input": {
+                "sides": 20
+              }
+            },
+            {
+              "type": "tool_use",
+              "id": "call_weather_1",
+              "name": "get_weather",
+              "input": {}
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "tool_result",
+              "tool_use_id": "call_dice_1",
+              "content": "17"
+            },
+            {
+              "type": "tool_result",
+              "tool_use_id": "call_weather_1",
+              "content": "Rain, 12°C"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "You rolled a 17! And yes, still raining."
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Roll again?"
+            }
+          ]
+        }
+      ],
+      "model": "claude-sonnet-4-5",
+      "max_tokens": 300,
+      "stop_sequences": [],
+      "temperature": 1,
+      "top_k": 0,
+      "stream": false,
+      "tool_choice": {
+        "type": "auto"
+      },
+      "tools": [
+        {
+          "name": "roll_dice",
+          "description": "Rolls dice and returns the total.",
+          "input_schema": {
+            "type": "object",
+            "properties": {
+              "sides": {
+                "type": "number",
+                "description": "Sides of each die"
+              },
+              "count": {
+                "type": "number",
+                "description": "How many dice",
+                "default": 1
+              }
+            },
+            "required": ["sides"]
+          }
+        },
+        {
+          "name": "get_weather",
+          "description": "The weather outside the café right now.",
+          "input_schema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+          }
+        }
+      ]
+    }
+  }
+}

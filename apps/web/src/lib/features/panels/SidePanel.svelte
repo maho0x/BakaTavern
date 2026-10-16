@@ -1,20 +1,27 @@
 <script lang="ts">
-  import Icon, { type IconName } from '../../components/Icon.svelte';
+  import Icon from '../../components/Icon.svelte';
   import { t, type MessageKey } from '../../i18n/index.svelte.ts';
-  import { ui, type PanelId } from '../../state/ui.svelte.ts';
-  import ConnectionPanel from './ConnectionPanel.svelte';
-  import PersonaPanel from './PersonaPanel.svelte';
-  import PresetPanel from './PresetPanel.svelte';
-  import SettingsPanel from './SettingsPanel.svelte';
-  import WorldInfoPanel from './WorldInfoPanel.svelte';
+  import { ui } from '../../state/ui.svelte.ts';
+  import { connectionDefaults } from '../../state/prefs.ts';
+  import { settings } from '../../state/settings.svelte.ts';
+  import type { Component } from 'svelte';
 
-  const tabs: { id: PanelId; icon: IconName; label: MessageKey }[] = [
-    { id: 'connection', icon: 'plug', label: 'panel.connection' },
-    { id: 'preset', icon: 'sliders', label: 'panel.preset' },
-    { id: 'persona', icon: 'user', label: 'panel.persona' },
-    { id: 'worldinfo', icon: 'book', label: 'panel.worldinfo' },
-    { id: 'settings', icon: 'gear', label: 'panel.settings' },
-  ];
+  import { panelTabs as tabs } from './tabs.ts';
+
+  const textApi = $derived(settings.get('connection', connectionDefaults).api === 'text');
+
+  /** Panels load when first shown, so they stay out of the first page load. */
+  const panels: Record<string, () => Promise<{ default: Component }>> = {
+    connection: () => import('./ConnectionPanel.svelte'),
+    preset: () => import('./PresetPanel.svelte'),
+    textPreset: () => import('./TextPresetPanel.svelte'),
+    formatting: () => import('./FormattingPanel.svelte'),
+    persona: () => import('./PersonaPanel.svelte'),
+    worldinfo: () => import('./WorldInfoPanel.svelte'),
+    regex: () => import('./RegexPanel.svelte'),
+    settings: () => import('./SettingsPanel.svelte'),
+  };
+  const shown = $derived(ui.panel === 'preset' && textApi ? 'textPreset' : ui.panel);
 </script>
 
 <aside class="panel" aria-label={ui.panel ? t(`panel.${ui.panel}` as MessageKey) : undefined}>
@@ -38,11 +45,10 @@
     >
   </header>
   <div class="content" role="tabpanel">
-    {#if ui.panel === 'connection'}<ConnectionPanel />
-    {:else if ui.panel === 'preset'}<PresetPanel />
-    {:else if ui.panel === 'persona'}<PersonaPanel />
-    {:else if ui.panel === 'worldinfo'}<WorldInfoPanel />
-    {:else if ui.panel === 'settings'}<SettingsPanel />
+    {#if shown && panels[shown]}
+      {#key shown}
+        {#await panels[shown]() then { default: Panel }}<Panel />{/await}
+      {/key}
     {/if}
   </div>
 </aside>

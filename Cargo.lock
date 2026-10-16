@@ -321,6 +321,7 @@ dependencies = [
  "bt-store",
  "bytes",
  "chacha20poly1305",
+ "flate2",
  "futures-util",
  "hex",
  "http-body-util",
@@ -346,6 +347,7 @@ dependencies = [
  "ulid",
  "url",
  "webpki-roots",
+ "zip",
 ]
 
 [[package]]

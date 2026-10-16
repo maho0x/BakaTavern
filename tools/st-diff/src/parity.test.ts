@@ -19,8 +19,9 @@ describe('requests match SillyTavern 1.19', () => {
       const ours = await bakaTavernRequest(scenario, defaultPreset);
       // The query carries the Gemini key; only the path matters.
       expect(ours.path).toBe(baseline.request.path.split('?')[0]);
-      // Messages first: their diff is the readable one.
+      // Messages or the prompt first: their diff is the readable one.
       expect(ours.body.messages).toEqual(baseline.request.body.messages);
+      expect(ours.body.prompt).toEqual(baseline.request.body.prompt);
       expect(ours.body).toEqual(baseline.request.body);
     });
   }

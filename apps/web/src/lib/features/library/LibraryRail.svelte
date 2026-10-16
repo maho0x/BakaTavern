@@ -4,6 +4,7 @@
   import { t } from '../../i18n/index.svelte.ts';
   import { chat } from '../../state/chat.svelte.ts';
   import { library } from '../../state/library.svelte.ts';
+  import { ui } from '../../state/ui.svelte.ts';
   import { createCharacter, excerptText, importCharacterFiles } from './actions.ts';
 
   let query = $state('');
@@ -51,6 +52,14 @@
         onclick={() => fileInput?.click()}
       >
         <Icon name="upload" />
+      </button>
+      <button
+        class="icon-btn"
+        title={t('library.urlTitle')}
+        aria-label={t('library.urlTitle')}
+        onclick={() => (ui.urlImportOpen = true)}
+      >
+        <Icon name="link" />
       </button>
       <button
         class="icon-btn"

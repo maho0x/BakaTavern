@@ -1,10 +1,13 @@
 import type { ChangeEvent, User } from '@bakatavern/api-client';
 import { ApiError } from '@bakatavern/api-client';
-import { loadStDefaultPreset } from '@bakatavern/core';
+import { loadStDefaultPreset, loadStTemplates } from '@bakatavern/core';
 
 import { api } from '../api.ts';
+import { t } from '../i18n/index.svelte.ts';
+import { applyStImport } from '../migration/apply.ts';
 import { chat } from './chat.svelte.ts';
 import { library } from './library.svelte.ts';
+import { formattingDefaults } from './prefs.ts';
 import { settings } from './settings.svelte.ts';
 import { ui } from './ui.svelte.ts';
 
@@ -35,6 +38,7 @@ class Session {
       this.status = 'ready';
       this.#listen();
       await seedPresets();
+      await applyPendingImport();
       await chat.restoreLast();
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
@@ -120,15 +124,43 @@ class Session {
   }
 }
 
-/** Gives a new user SillyTavern's "Default" Chat Completion preset. */
-async function seedPresets() {
-  if (library.presets.some((p) => p.kind === 'openai')) return;
+/** Applies SillyTavern settings an import left behind (e.g. from `bakatavern import-st`). */
+export async function applyPendingImport() {
   try {
-    await api.upsertPreset('openai', 'Default', await loadStDefaultPreset());
-  } catch {
-    // Another tab may have seeded it at the same time.
+    if (await applyStImport()) ui.toast(t('import.settingsApplied'), 'success');
+  } catch (error) {
+    ui.toast(t('import.settingsFailed', { message: (error as Error).message }), 'error');
   }
-  await library.refreshPresets().catch(() => {});
+}
+
+/**
+ * Gives a new user SillyTavern's "Default" Chat Completion preset and, once, its formatting
+ * templates and Text Completion presets (names that exist already are left alone).
+ */
+async function seedPresets() {
+  let changed = false;
+  if (!library.presets.some((p) => p.kind === 'openai')) {
+    try {
+      await api.upsertPreset('openai', 'Default', await loadStDefaultPreset());
+      changed = true;
+    } catch {
+      // Another tab may have seeded it at the same time.
+    }
+  }
+  if (!settings.get('formatting', formattingDefaults).seeded) {
+    try {
+      const templates = await loadStTemplates();
+      const presets = (['context', 'instruct', 'sysprompt', 'reasoning', 'textgen'] as const).flatMap(
+        (kind) => templates[kind].map((t) => ({ kind, name: t.name, data: t.data })),
+      );
+      await api.seedPresets(presets);
+      settings.update('formatting', { seeded: true });
+      changed = true;
+    } catch {
+      // Tried again on the next start.
+    }
+  }
+  if (changed) await library.refreshPresets().catch(() => {});
 }
 
 export const session = new Session();

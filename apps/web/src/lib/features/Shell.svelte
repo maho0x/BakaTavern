@@ -1,19 +1,22 @@
 <script lang="ts">
-  import Icon, { type IconName } from '../components/Icon.svelte';
-  import { t, type MessageKey } from '../i18n/index.svelte.ts';
-  import { ui, type PanelId } from '../state/ui.svelte.ts';
-  import CharacterEditor from './character/CharacterEditor.svelte';
+  import Icon from '../components/Icon.svelte';
+  import { t } from '../i18n/index.svelte.ts';
+  import { library } from '../state/library.svelte.ts';
+  import { connectionDefaults } from '../state/prefs.ts';
+  import { regex } from '../state/regex.svelte.ts';
+  import { settings } from '../state/settings.svelte.ts';
+  import { ui } from '../state/ui.svelte.ts';
   import ChatPane from './chat/ChatPane.svelte';
   import LibraryRail from './library/LibraryRail.svelte';
   import SidePanel from './panels/SidePanel.svelte';
+  import { panelTabs as dock } from './panels/tabs.ts';
 
-  const dock: { id: PanelId; icon: IconName; label: MessageKey }[] = [
-    { id: 'connection', icon: 'plug', label: 'panel.connection' },
-    { id: 'preset', icon: 'sliders', label: 'panel.preset' },
-    { id: 'persona', icon: 'user', label: 'panel.persona' },
-    { id: 'worldinfo', icon: 'book', label: 'panel.worldinfo' },
-    { id: 'settings', icon: 'gear', label: 'panel.settings' },
-  ];
+  // Keep the active preset's embedded regex scripts loaded (they also apply to display).
+  $effect(() => {
+    void settings.get('connection', connectionDefaults).presetId;
+    void library.presets.map((p) => p.rev);
+    void regex.syncPreset();
+  });
 </script>
 
 <div class="shell" class:narrow={ui.narrow} class:panel-open={!!ui.panel}>
@@ -53,7 +56,21 @@
   <div class="sheet full"><SidePanel /></div>
 {/if}
 
-<CharacterEditor />
+<!-- The editors and dialogs load when first opened. -->
+{#if ui.urlImportOpen}
+  {#await import('./library/UrlImportDialog.svelte') then { default: UrlImportDialog }}<UrlImportDialog
+      open
+      onclose={() => (ui.urlImportOpen = false)}
+    />{/await}
+{/if}
+{#if ui.editingCharacterId}
+  {#await import('./character/CharacterEditor.svelte') then { default: CharacterEditor }}<CharacterEditor
+    />{/await}
+{/if}
+{#if ui.editingLorebookId}
+  {#await import('./worldinfo/LorebookEditor.svelte') then { default: LorebookEditor }}<LorebookEditor
+    />{/await}
+{/if}
 
 <style>
   .shell {

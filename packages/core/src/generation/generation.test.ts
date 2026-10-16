@@ -2,16 +2,20 @@ import { describe, expect, it } from 'vitest';
 
 import { createMacroEngine } from '../macros/index.ts';
 import { defaultChatCompletionPreset } from '../prompt/index.ts';
-import { getProvider } from '../providers/index.ts';
+import { getProvider, normalizeTextgenSettings } from '../providers/index.ts';
+import { newRegexScript, RegexPlacement } from '../regex/index.ts';
 import { estimateTokenizer } from '../tokenizers/index.ts';
 import { createEntry, defaultWorldInfoSettings, WorldInfoPosition } from '../worldinfo/index.ts';
 import {
   cleanUpMessage,
+  trimToEndSentence,
   extractReasoning,
   greetingSwipes,
+  itemizePrompt,
   PersonaPosition,
   prepareGeneration,
-  type PrepareOptions,
+  type ChatCompletionOptions,
+  type TextCompletionOptions,
 } from './index.ts';
 
 const macros = createMacroEngine();
@@ -31,7 +35,7 @@ const card = {
   },
 };
 
-function options(overrides: Partial<PrepareOptions> = {}): PrepareOptions {
+function options(overrides: Partial<ChatCompletionOptions> = {}): ChatCompletionOptions {
   return {
     type: 'normal',
     card,
@@ -167,6 +171,102 @@ describe('prepareGeneration', () => {
     expect(Object.keys((chatMetadata.timedWorldInfo as { sticky: object }).sticky)).toEqual(['B.0']);
   });
 
+  it('applies prompt-only regex scripts to the history and World Info', async () => {
+    const regexScripts = [
+      newRegexScript('a', {
+        scriptName: 'ancient',
+        findRegex: '/old/g',
+        replaceString: 'ancient',
+        placement: [RegexPlacement.USER_INPUT],
+        promptOnly: true,
+      }),
+      newRegexScript('b', {
+        scriptName: 'south',
+        findRegex: '/north/',
+        replaceString: 'south',
+        placement: [RegexPlacement.WORLD_INFO],
+        promptOnly: true,
+      }),
+      newRegexScript('c', {
+        scriptName: 'display only',
+        findRegex: '/Welcome/',
+        replaceString: 'Hi',
+        placement: [RegexPlacement.AI_OUTPUT],
+        markdownOnly: true,
+      }),
+    ];
+    const prepared = await prepareGeneration(options({ regexScripts }));
+    const texts = prepared.request.messages.map((m) => m.content);
+    expect(texts).toContain('Where is the ancient tower?');
+    expect(texts).toContain('The old tower lies south.');
+    expect(texts).toContain('Welcome, Alice.');
+  });
+
+  it('adds the latest reasoning to the prompt when enabled', async () => {
+    const base = options();
+    const messages = base.messages.map((m, i) => (i === 0 ? { ...m, extra: { reasoning: 'Be kind.' } } : m));
+    const reasoning = {
+      addToPrompts: true,
+      maxAdditions: 1,
+      prefix: '<think>',
+      suffix: '</think>',
+      separator: '\n',
+    };
+    const prepared = await prepareGeneration(options({ messages, reasoning }));
+    expect(prepared.request.messages.map((m) => m.content)).toContain(
+      '<think>Be kind.</think>\nWelcome, Alice.',
+    );
+    const off = await prepareGeneration(options({ messages }));
+    expect(off.request.messages.map((m) => m.content)).toContain('Welcome, Alice.');
+  });
+
+  it('puts the reasoning of a continued reply before it', async () => {
+    const messages = options()
+      .messages.slice(0, 1)
+      .map((m) => ({ ...m, extra: { reasoning: 'Plan.' } }));
+    const prepared = await prepareGeneration(options({ type: 'continue', messages }));
+    expect(prepared.reasoningPrefix).toEqual({ text: '<think>Plan.</think>\n', incomplete: false });
+    expect(prepared.request.messages.map((m) => m.content)).toContain(
+      '<think>Plan.</think>\nWelcome, Alice.',
+    );
+  });
+
+  it('itemizes the prompt it built', async () => {
+    const opts = options();
+    const prepared = await prepareGeneration(opts);
+    const itemized = await itemizePrompt(prepared, opts, estimateTokenizer);
+    expect(itemized).toMatchObject({ api: 'chat', source: 'openai', tokenizer: 'estimate', padding: 0 });
+    expect(itemized.items.map((i) => i.id)).toEqual(expect.arrayContaining(['main', 'chatHistory']));
+    expect(itemized.total).toBe(itemized.items.reduce((sum, i) => sum + i.tokens, 0));
+    expect(itemized.messages).toEqual(prepared.api === 'chat' ? prepared.prompt.messages : undefined);
+    expect(itemized.worldInfo.map((e) => e.comment)).toEqual(
+      prepared.worldInfo.activated.map((e) => e.comment),
+    );
+  });
+
+  it('itemizes Text Completion prompts by part', async () => {
+    const { preset: _preset, connection: _connection, ...common } = options();
+    const opts: TextCompletionOptions = {
+      ...common,
+      api: 'text',
+      text: {
+        settings: normalizeTextgenSettings({
+          type: 'koboldcpp',
+          server_urls: { koboldcpp: 'http://127.0.0.1:5001' },
+        }),
+        maxContext: 4096,
+        maxResponse: 200,
+      },
+    };
+    const prepared = await prepareGeneration(opts);
+    const itemized = await itemizePrompt(prepared, opts, estimateTokenizer);
+    expect(itemized).toMatchObject({ api: 'text', source: 'koboldcpp', maxContext: 4096, padding: 64 });
+    expect(itemized.prompt).toBe(prepared.api === 'text' ? prepared.prompt.prompt : undefined);
+    const ids = itemized.items.map((i) => i.id);
+    expect(ids).toEqual(expect.arrayContaining(['storyString', 'charDescription', 'chatHistory']));
+    expect(itemized.items.find((i) => i.id === 'charDescription')?.within).toBe('storyString');
+  });
+
   it('creates greetings with macros resolved', () => {
     expect(greetingSwipes(card, macros, { user: 'Alice', char: 'Seraphina' })).toEqual([
       'Welcome, Alice.',
@@ -187,6 +287,27 @@ describe('reply cleanup', () => {
     expect(cleanUpMessage('Hello there.\nAli', opts)).toBe('Hello there.');
     expect(cleanUpMessage('Alice: I speak for her', opts)).toBe('');
     expect(cleanUpMessage('line one   \nline two  ', opts)).toBe('line one\nline two');
+  });
+
+  it('removes leaked instruct sequences and repeated names, trims to a sentence', () => {
+    const instruct = {
+      stop_sequence: '<|im_end|>',
+      input_sequence: '<|im_start|>user',
+      output_sequence: '<|im_start|>assistant',
+      last_output_sequence: '',
+      sequences_as_stop_strings: true,
+    };
+    const opts = {
+      isImpersonate: false,
+      isContinue: false,
+      stoppingStrings: [],
+      instruct,
+      charName: 'Seraphina',
+    };
+    expect(cleanUpMessage('Seraphina: Hello.<|im_end|>\n<|im_start|>user\nHi', opts)).toBe('Hello.');
+    expect(cleanUpMessage('<|im_start|>assistant\nSure.\nSeraphina: More.', opts)).toBe('\nSure.\nMore.');
+    expect(cleanUpMessage('One. Two and a half', { ...opts, trimSentences: true })).toBe('One.');
+    expect(trimToEndSentence('Done! 😊 trailing')).toBe('Done! 😊');
   });
 
   it('extracts reasoning blocks, including unterminated ones', () => {

@@ -1,3 +1,6 @@
+import { parseExampleIntoIndividual } from './instruct.ts';
+import type { ToolInvocation } from '../tools.ts';
+import type { MessageAttachments } from './media.ts';
 import { NamesBehavior } from './preset.ts';
 import type { ChatMessage } from './types.ts';
 
@@ -12,7 +15,14 @@ export interface HistoryMessage {
   forceAvatar?: boolean;
   signature?: string;
   reasoning?: string;
+  /** Attachments that can be inlined (Chat Completion). */
+  media?: MessageAttachments;
+  /** Tool calls the message records (`extra.tool_invocations`). */
+  invocations?: ToolInvocation[];
 }
+
+/** A history message for Chat Completion, with what is added to it in the prompt. */
+export type HistoryPrompt = ChatMessage & { media?: MessageAttachments; invocations?: ToolInvocation[] };
 
 export interface HistoryOptions {
   namesBehavior: number;
@@ -21,7 +31,10 @@ export interface HistoryOptions {
 }
 
 /** Chat history → Chat Completion messages (SillyTavern `setOpenAIMessages`), chronological. */
-export function toPromptMessages(history: readonly HistoryMessage[], options: HistoryOptions): ChatMessage[] {
+export function toPromptMessages(
+  history: readonly HistoryMessage[],
+  options: HistoryOptions,
+): HistoryPrompt[] {
   return history.map((m) => {
     const narrator = m.role === 'system';
     const role = m.role === 'user' ? 'user' : narrator ? 'system' : 'assistant';
@@ -45,6 +58,8 @@ export function toPromptMessages(history: readonly HistoryMessage[], options: Hi
       name: m.name,
       ...(m.signature ? { signature: m.signature } : {}),
       ...(m.reasoning ? { reasoning: m.reasoning } : {}),
+      ...(m.media?.media.length ? { media: m.media } : {}),
+      ...(m.invocations ? { invocations: m.invocations } : {}),
     };
   });
 }
@@ -71,38 +86,12 @@ export interface ExampleOptions {
 
 /** Example blocks → messages named `example_user` / `example_assistant` (`parseExampleIntoIndividual`). */
 export function examplesToMessages(blocks: readonly string[], options: ExampleOptions): ChatMessage[][] {
-  return blocks.map((block) => {
-    const text = block.replace(/<START>/i, '{Example Dialogue:}').replace(/\r/gm, '');
-    const groupBotNames = options.groupNames.map((n) => `${n}:`);
-    const result: ChatMessage[] = [];
-    const lines = text.split('\n');
-    let current: string[] = [];
-    let inUser = false;
-    let inBot = false;
-    let botName = options.charName;
-    const add = (name: string, systemName: 'example_user' | 'example_assistant') => {
-      let parsed = current.join('\n').replace(`${name}:`, '').trim();
-      if (options.isGroup) parsed = `${name}: ${parsed}`;
-      result.push({ role: 'system', content: parsed, name: systemName });
-      current = [];
-    };
-    // The first line is always the "{Example Dialogue:}" heading.
-    for (let i = 1; i < lines.length; i++) {
-      const line = lines[i]!;
-      if (line.startsWith(`${options.userName}:`)) {
-        inUser = true;
-        if (inBot) add(botName, 'example_assistant');
-        inBot = false;
-      } else if (line.startsWith(`${options.charName}:`) || groupBotNames.some((n) => line.startsWith(n))) {
-        if (!line.startsWith(`${options.charName}:`) && groupBotNames.length) botName = line.split(':')[0]!;
-        inBot = true;
-        if (inUser) add(options.userName, 'example_user');
-        inUser = false;
-      }
-      current.push(line);
-    }
-    if (inUser) add(options.userName, 'example_user');
-    else if (inBot) add(botName, 'example_assistant');
-    return result;
-  });
+  return blocks.map((block) =>
+    parseExampleIntoIndividual(block.replace(/<START>/i, '{Example Dialogue:}').replace(/\r/gm, ''), {
+      userName: options.userName,
+      charName: options.charName,
+      groupNames: options.groupNames,
+      appendNames: options.isGroup,
+    }).map((m) => ({ role: 'system', content: m.content, name: m.name })),
+  );
 }

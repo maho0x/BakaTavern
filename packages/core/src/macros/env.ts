@@ -53,7 +53,15 @@ export interface MacroEnv {
   charVersion?: string;
   firstMessage?: string;
   alternateGreetings?: readonly string[];
-  systemPrompt?: string;
+  /** Instruct template in effect, only when instruct mode is on (SillyTavern keys). */
+  instruct?: Readonly<Record<string, unknown>>;
+  /** System prompt, only when enabled (SillyTavern `power_user.sysprompt`). */
+  sysprompt?: { content: string };
+  /** `{{systemPrompt}}` gives the card's system prompt when it has one. */
+  preferCharacterPrompt?: boolean;
+  /** Context template separators. */
+  chatStart?: string;
+  exampleSeparator?: string;
 
   model?: string;
   /** Original text a macro-bearing override replaces (`{{original}}`). */
@@ -86,6 +94,8 @@ export interface MacroEnv {
   /** Time since the last user message, humanized ("5 minutes"). */
   idleDuration?: string;
   isMobile?: boolean;
-  /** Extra simple macros (plugins, overrides) resolved by name. */
+  /** Extra simple macros (plugins, overrides) resolved by name, before the registered ones. */
   dynamic?: Readonly<Record<string, string | (() => string)>>;
+  /** Applied to the output of every macro call (e.g. escaping for a regex). */
+  postProcess?: (value: string) => string;
 }

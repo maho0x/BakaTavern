@@ -1,5 +1,6 @@
 import { expect, type APIRequestContext, type Page, type TestInfo } from '@playwright/test';
 
+import { tokenizePaths } from '../../mock-llm/src/server.ts';
 import { cardPng } from './fixtures.ts';
 
 export const mockUrl = `http://127.0.0.1:${process.env.BT_E2E_MOCK_PORT ?? 5056}`;
@@ -14,14 +15,28 @@ export interface MockRequest {
 /** Scripts the mock LLM. `reply: null` makes it echo the last user message again. */
 export async function mockReply(
   request: APIRequestContext,
-  state: { reply?: string | null; reasoning?: string | null; delayMs?: number },
+  state: {
+    reply?: string | null;
+    reasoning?: string | null;
+    delayMs?: number;
+    toolCall?: { name: string; arguments: Record<string, unknown> } | null;
+  },
 ) {
-  await request.post(`${mockUrl}/__reply`, { data: { reply: null, reasoning: null, delayMs: 5, ...state } });
+  await request.post(`${mockUrl}/__reply`, {
+    data: { reply: null, reasoning: null, delayMs: 5, toolCall: null, ...state },
+  });
 }
 
+/** Requests the mock received for generations (not the ones for its tokenizer). */
 export async function mockRequests(request: APIRequestContext): Promise<MockRequest[]> {
   const all = (await (await request.get(`${mockUrl}/__requests`)).json()) as MockRequest[];
-  return all.filter((r) => r.method === 'POST');
+  return all.filter((r) => r.method === 'POST' && !tokenizePaths.includes(r.path));
+}
+
+/** Requests to the mock's Text Completion tokenizer. */
+export async function mockTokenizeRequests(request: APIRequestContext): Promise<MockRequest[]> {
+  const all = (await (await request.get(`${mockUrl}/__requests`)).json()) as MockRequest[];
+  return all.filter((r) => r.method === 'POST' && tokenizePaths.includes(r.path));
 }
 
 export async function clearMockRequests(request: APIRequestContext) {
@@ -65,6 +80,16 @@ export async function importCards(page: Page, files: { name: string; card: { v2?
     .setInputFiles(
       files.map((f) => ({ name: `${f.name}.png`, mimeType: 'image/png', buffer: cardPng(f.card) })),
     );
+}
+
+/** Opens a side panel: from the dock on desktop, through the panel sheet's tabs on phones. */
+export async function openPanel(page: Page, label: string) {
+  if (isMobile(page)) {
+    await page.getByRole('button', { name: 'Connection' }).first().click();
+    await page.getByRole('tab', { name: label }).click();
+  } else {
+    await page.getByRole('navigation', { name: 'Panels' }).getByRole('button', { name: label }).click();
+  }
 }
 
 export function messages(page: Page) {

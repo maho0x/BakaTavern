@@ -10,7 +10,7 @@ A lighter, faster SillyTavern, rebuilt from scratch and compatible with SillyTav
 
 - **One file to run.** A Rust server with SQLite and the web app embedded. The Docker image is 19.8 MB, ready about 0.1 s after start, about 2 MiB of memory when idle (measured with `docker stats`).
 - **Replies are never lost.** Generation runs on the server. Lock your phone, close the tab or reload: the reply is there when you come back, and another device viewing the same chat sees it stream live.
-- **Same prompts as SillyTavern.** With the same card, preset and lorebooks, the request sent to the model is identical to SillyTavern 1.19's (see below).
+- **Same prompts as SillyTavern.** With the same card, preset and lorebooks, the request sent to the model is identical to SillyTavern 1.19's, for Chat Completion and Text Completion alike (see below).
 - **Keys stay on the server.** API keys are stored encrypted, never sent to the browser, and only attached to the addresses you allow.
 - **In sync everywhere.** Tabs and devices update each other in real time instead of overwriting each other.
 
@@ -31,9 +31,18 @@ pnpm build
 
 Listening on a non-local address requires a password (`BT_PASSWORD` or `bakatavern passwd`). See [README.zh-CN.md](README.zh-CN.md) for all settings.
 
+## Moving from SillyTavern
+
+Upload a backup zip of SillyTavern's `data/default-user` folder in Settings → Move from SillyTavern, or run `bakatavern import-st <SillyTavern folder | backup.zip> [--secrets]` on the server. Cards, chats, lorebooks, presets, personas, tags and settings come over; importing again does not duplicate anything. "Export for SillyTavern" packs everything back into a SillyTavern data folder.
+
 ## Parity with SillyTavern
 
-`tools/st-diff` runs the same scenarios through SillyTavern 1.19 (in Docker) and BakaTavern and compares the requests sent to the model. All 15 current scenarios match exactly. They cover card fields, example dialogue, personas, character prompt overrides, Author's Note, World Info, continue with and without prefill, impersonation, swipes, names in content, squashed system messages, Claude and Gemini. The recorded SillyTavern requests are checked in, so `pnpm test` verifies them without Docker.
+`tools/st-diff` runs the same scenarios through SillyTavern 1.19 (in Docker) and BakaTavern and compares the requests sent to the model. All 110 current scenarios match exactly:
+
+- 74 for Chat Completion: card fields, example dialogue, personas, character prompt overrides, Author's Note, World Info (matching, recursion, inclusion groups, timed effects, filters, budget, positions), regex scripts, continue with and without prefill, impersonation, swipes, reasoning in the prompt, prompt post-processing, context trimming counted with the model's tokenizer, logit bias lists, attached images, video and files, tool calling (tools offered and past calls in seven providers' formats), and the request body of every supported source.
+- 36 for Text Completion: plain and instruct mode with SillyTavern's ChatML, Llama 3, Mistral, Alpaca, Gemma and DeepSeek templates, the story string in the chat, World Info and anchors, trimming to the context size (with the estimate and with a real tokenizer), continue, impersonation and swipes, system prompts and post-history instructions, the user filler message, first and last sequences, "start reply with", pinned and stripped examples, banned tokens and logit bias through the backend's tokenizer, file attachments, and the request body of each of the 15 backends.
+
+The recorded SillyTavern requests are checked in, so `pnpm test` verifies them without Docker.
 
 ## Development
 

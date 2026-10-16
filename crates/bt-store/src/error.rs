@@ -12,8 +12,22 @@ pub enum StoreError {
     Conflict { current: i64 },
     #[error("{0}")]
     Invalid(String),
+    /// The name is already used by another item of the same kind.
+    #[error("{0}")]
+    Exists(String),
     #[error("database task failed: {0}")]
     Task(String),
+}
+
+impl StoreError {
+    /// A UNIQUE constraint rejected the write (e.g. a name that is already taken).
+    pub fn is_unique_violation(&self) -> bool {
+        matches!(
+            self,
+            StoreError::Sqlite(rusqlite::Error::SqliteFailure(e, _))
+                if e.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
+        )
+    }
 }
 
 pub type Result<T, E = StoreError> = std::result::Result<T, E>;

@@ -1,8 +1,11 @@
 <script lang="ts">
   import type { Message } from '@bakatavern/api-client';
+  import { messageAttachments, RegexPlacement } from '@bakatavern/core';
 
   import Avatar from '../../components/Avatar.svelte';
   import Icon from '../../components/Icon.svelte';
+  import { activeConnection } from '../../generation/pipeline.ts';
+  import { tokenizerFor } from '../../generation/tokenizers.ts';
   import { t } from '../../i18n/index.svelte.ts';
   import { renderMessage } from '../../render/markdown.ts';
   import { chat } from '../../state/chat.svelte.ts';
@@ -33,8 +36,45 @@
     return streaming.text;
   });
   const reasoning = $derived(streaming ? streaming.reasoning : String(extra.reasoning ?? ''));
+
+  // Token counts by the tokenizer of the connection in use, counted in the tokenizer worker.
+  let tokenCount = $state<number | null>(null);
+  $effect(() => {
+    tokenCount = null;
+    const connection = prefs.showTokenCounts && message && !streaming ? activeConnection() : null;
+    if (!connection) return;
+    let current = true;
+    Promise.resolve(tokenizerFor(connection).count(baseText))
+      .then((count) => {
+        if (current) tokenCount = count;
+      })
+      .catch(() => {});
+    return () => {
+      current = false;
+    };
+  });
   const reasoningSeconds = $derived(Math.max(1, Math.round(Number(extra.reasoning_duration ?? 0) / 1000)));
-  const html = $derived(renderMessage(text, { html: prefs.renderHtml, externalMedia: prefs.externalMedia }));
+  // Display-only regex scripts, as SillyTavern formats messages: by placement and depth.
+  const placement = $derived(
+    role === 'user'
+      ? RegexPlacement.USER_INPUT
+      : (message?.extra as { type?: string } | undefined)?.type === 'narrator'
+        ? RegexPlacement.SLASH_COMMAND
+        : RegexPlacement.AI_OUTPUT,
+  );
+  const depth = $derived(message ? chat.regexDepths.get(message.id) : 0);
+  const shownText = $derived(
+    chat.applyRegex(text, placement, { characterOverride: name, isMarkdown: true, depth }),
+  );
+  const shownReasoning = $derived(
+    chat.applyRegex(reasoning, RegexPlacement.REASONING, { isMarkdown: true, depth }),
+  );
+  /** A record of tool calls (SillyTavern `extra.isSmallSys`): our own HTML, shown small. */
+  const smallSys = $derived(Boolean((message?.extra as { isSmallSys?: unknown } | undefined)?.isSmallSys));
+  const html = $derived(
+    renderMessage(shownText, { html: prefs.renderHtml || smallSys, externalMedia: prefs.externalMedia }),
+  );
+  const reasoningHtml = $derived(renderMessage(shownReasoning, { html: false, externalMedia: false }));
   const avatarHash = $derived.by(() => {
     if (role === 'assistant') return chat.character?.avatar ?? null;
     if (role === 'user')
@@ -47,6 +87,13 @@
   let editing = $state(false);
   let draft = $state('');
   let menuOpen = $state(false);
+  /** The menu opens upwards when there is no room for it below. */
+  let menuUp = $state(false);
+  function toggleMenu(event: MouseEvent) {
+    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+    menuUp = rect.bottom + 340 > window.innerHeight && rect.top > 340;
+    menuOpen = !menuOpen;
+  }
 
   function startEdit() {
     draft = baseText;
@@ -78,13 +125,55 @@
     ui.toast(t('chat.copied'));
   }
 
+  /** When the shown reply's generation started: the key of its prompt in the prompt viewer. */
+  const startedAt = $derived.by(() => {
+    const value =
+      swipe?.info.gen_started ?? (message?.data as { gen_started?: unknown } | undefined)?.gen_started;
+    return typeof value === 'string' && value ? value : null;
+  });
+
+  /** Images, video, audio and files attached to the message (SillyTavern's formats, old ones too). */
+  const attachments = $derived(messageAttachments(message?.extra, prefs.mediaDisplay ?? 'list'));
+  const shownMedia = $derived(
+    attachments.display === 'gallery' && attachments.media.length
+      ? [attachments.media[attachments.index]!]
+      : attachments.media,
+  );
+  const sizeText = (bytes: number | undefined) =>
+    !bytes
+      ? ''
+      : bytes < 1024 * 1024
+        ? `${Math.max(1, Math.round(bytes / 1024))} KB`
+        : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+
+  /** The checkpoint this message links to (SillyTavern `extra.bookmark_link`). */
+  const bookmark = $derived.by(() => {
+    const link = (message?.extra as { bookmark_link?: unknown } | undefined)?.bookmark_link;
+    return typeof link === 'string' && link ? link : null;
+  });
+  async function createCheckpoint() {
+    const suggested = chat.checkpointTitle();
+    const name = prompt(
+      bookmark ? t('chat.checkpointReplacePrompt', { name: bookmark }) : t('chat.checkpointPrompt'),
+      suggested,
+    );
+    if (name === null) return;
+    await chat.checkpoint(index, name.trim() || suggested);
+  }
+
   function onEditKey(event: KeyboardEvent) {
     if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) void saveEdit();
     if (event.key === 'Escape') editing = false;
   }
 </script>
 
-<article class="message {role}" class:hidden={message?.hidden} data-index={index}>
+<article
+  class="message {role}"
+  class:hidden={message?.hidden}
+  class:small-sys={smallSys}
+  class:menu-open={menuOpen}
+  data-index={index}
+>
   <div class="gutter">
     {#if role !== 'system'}<Avatar hash={avatarHash} {name} width={40} />{/if}
   </div>
@@ -92,6 +181,16 @@
     <header>
       <span class="name">{name}</span>
       {#if prefs.showTimestamps && time}<time class="faint">{time}</time>{/if}
+      {#if tokenCount !== null}<span class="faint tokens">{t('chat.tokenCount', { count: tokenCount })}</span
+        >{/if}
+      {#if bookmark}
+        <button
+          class="icon-btn small flag"
+          title={t('chat.openCheckpoint', { name: bookmark })}
+          aria-label={t('chat.openCheckpoint', { name: bookmark })}
+          onclick={() => act(() => chat.openChatByTitle(bookmark))}><Icon name="flag" size={14} /></button
+        >
+      {/if}
       {#if message?.hidden}<span class="faint" title={t('chat.hiddenHint')}
           ><Icon name="eyeOff" size={14} /></span
         >{/if}
@@ -108,17 +207,29 @@
             title={t('chat.more')}
             aria-label={t('chat.more')}
             aria-expanded={menuOpen}
-            onclick={() => (menuOpen = !menuOpen)}
+            onclick={toggleMenu}
           >
             <Icon name="more" size={15} />
           </button>
           {#if menuOpen}
-            <div class="menu" role="menu">
+            <div class="menu" class:up={menuUp} role="menu">
               <button role="menuitem" onclick={() => act(copy)}
                 ><Icon name="copy" size={15} />{t('chat.copy')}</button
               >
+              {#if startedAt && chat.chat}
+                <button
+                  role="menuitem"
+                  onclick={() => {
+                    menuOpen = false;
+                    ui.promptOf = { chatId: chat.chat!.id, startedAt: startedAt! };
+                  }}><Icon name="text" size={15} />{t('chat.viewPrompt')}</button
+                >
+              {/if}
               <button role="menuitem" onclick={() => act(() => chat.branch(index))}
                 ><Icon name="branch" size={15} />{t('chat.branch')}</button
+              >
+              <button role="menuitem" onclick={() => act(createCheckpoint)}
+                ><Icon name="flag" size={15} />{t('chat.checkpoint')}</button
               >
               <button role="menuitem" onclick={() => act(() => chat.toggleHidden(message!.id))}>
                 <Icon name={message.hidden ? 'eye' : 'eyeOff'} size={15} />{message.hidden
@@ -146,7 +257,7 @@
             : t('chat.thoughtFor', { seconds: reasoningSeconds })}</summary
         >
         <!-- eslint-disable-next-line svelte/no-at-html-tags -- renderMessage sanitizes with DOMPurify -->
-        <div class="prose small">{@html renderMessage(reasoning, { html: false, externalMedia: false })}</div>
+        <div class="prose small">{@html reasoningHtml}</div>
       </details>
     {/if}
 
@@ -168,6 +279,48 @@
       <div class="prose" class:streaming={!!streaming}>
         <!-- eslint-disable-next-line svelte/no-at-html-tags -- renderMessage sanitizes with DOMPurify -->
         {@html html}{#if streaming}<span class="caret" aria-hidden="true"></span>{/if}
+      </div>
+    {/if}
+
+    {#if message && (attachments.media.length || attachments.files.length)}
+      <div class="attachments">
+        {#each shownMedia as item (item.url)}
+          {#if item.type === 'video'}
+            <!-- svelte-ignore a11y_media_has_caption -->
+            <video src={item.url} controls preload="metadata" title={item.title}></video>
+          {:else if item.type === 'audio'}
+            <audio src={item.url} controls preload="metadata" title={item.title}></audio>
+          {:else}
+            <a class="image" href={item.url} target="_blank" rel="noopener"
+              ><img src={item.url} alt={item.title ?? ''} loading="lazy" /></a
+            >
+          {/if}
+        {/each}
+        {#if attachments.display === 'gallery' && attachments.media.length > 1}
+          <div class="gallery-nav">
+            <button
+              class="icon-btn small"
+              aria-label={t('chat.mediaPrev')}
+              disabled={attachments.index === 0}
+              onclick={() => act(() => chat.setMediaIndex(message!.id, attachments.index - 1))}
+              ><Icon name="left" size={16} /></button
+            >
+            <span class="faint">{attachments.index + 1}/{attachments.media.length}</span>
+            <button
+              class="icon-btn small"
+              aria-label={t('chat.mediaNext')}
+              disabled={attachments.index >= attachments.media.length - 1}
+              onclick={() => act(() => chat.setMediaIndex(message!.id, attachments.index + 1))}
+              ><Icon name="right" size={16} /></button
+            >
+          </div>
+        {/if}
+        {#each attachments.files as file (file.url)}
+          <a class="file" href={file.url} download={file.name ?? true}>
+            <Icon name="file" size={16} /><span class="name">{file.name ?? file.url}</span>
+            <span class="faint">{sizeText(file.size)}</span>
+          </a>
+        {/each}
       </div>
     {/if}
 
@@ -202,6 +355,20 @@
     padding: 0.9rem 0 0.6rem;
     content-visibility: auto;
     contain-intrinsic-size: auto 160px;
+  }
+  .message.small-sys .prose {
+    font-family: var(--bt-font-ui);
+    font-size: var(--bt-size-sm);
+    color: var(--bt-ink-muted);
+  }
+  .message.small-sys .gutter {
+    visibility: hidden;
+  }
+  /* Skipped rendering clips to the message: not while its menu is open. */
+  .message.menu-open {
+    content-visibility: visible;
+    position: relative;
+    z-index: 6;
   }
   .message.user .body {
     background: var(--bt-user-tint);
@@ -240,10 +407,68 @@
   .assistant .name {
     color: var(--bt-dialogue);
   }
-  time {
+  time,
+  .tokens {
     font-size: var(--bt-size-xs);
   }
+  .flag {
+    color: var(--bt-accent);
+  }
+  .attachments {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+  }
+  .attachments .image img {
+    min-width: 3rem;
+    min-height: 3rem;
+    object-fit: contain;
+  }
+  .attachments .image img,
+  .attachments video {
+    display: block;
+    max-width: min(100%, 22rem);
+    max-height: 18rem;
+    border-radius: var(--bt-radius);
+    border: 1px solid var(--bt-line);
+    background: var(--bt-surface-2);
+  }
+  .attachments audio {
+    max-width: 100%;
+  }
+  .gallery-nav {
+    display: flex;
+    align-items: center;
+    gap: 0.25rem;
+    align-self: center;
+    font-size: var(--bt-size-xs);
+  }
+  .attachments .file {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    max-width: 100%;
+    padding: 0.35rem 0.6rem;
+    border: 1px solid var(--bt-line);
+    border-radius: var(--bt-radius);
+    background: var(--bt-surface);
+    color: var(--bt-ink);
+    font-size: var(--bt-size-sm);
+    text-decoration: none;
+  }
+  .attachments .file .name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .tokens {
+    font-variant-numeric: tabular-nums;
+  }
   .tools {
+    position: relative;
     margin-inline-start: auto;
     display: flex;
     gap: 0.1rem;
@@ -251,7 +476,8 @@
     transition: opacity 120ms;
   }
   .message:hover .tools,
-  .message:focus-within .tools {
+  .message:focus-within .tools,
+  .message.menu-open .tools {
     opacity: 1;
   }
   @media (hover: none) {
@@ -271,6 +497,10 @@
     border-radius: var(--bt-radius);
     background: var(--bt-surface-2);
     box-shadow: 0 12px 30px rgb(0 0 0 / 30%);
+  }
+  .menu.up {
+    top: auto;
+    bottom: 2rem;
   }
   .menu button {
     display: flex;

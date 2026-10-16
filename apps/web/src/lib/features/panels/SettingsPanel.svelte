@@ -1,8 +1,25 @@
 <script lang="ts">
+  import type { StImportReport } from '@bakatavern/api-client';
+
   import { api } from '../../api.ts';
-  import { i18n, locales, t, type Locale } from '../../i18n/index.svelte.ts';
-  import { chatDefaults, uiDefaults, type UiPrefs } from '../../state/prefs.ts';
-  import { session } from '../../state/session.svelte.ts';
+  import Icon from '../../components/Icon.svelte';
+  import { i18n, locales, t, type Locale, type MessageKey } from '../../i18n/index.svelte.ts';
+  import { toStSettings } from '../../migration/st-settings.ts';
+  import { library } from '../../state/library.svelte.ts';
+  import {
+    chatDefaults,
+    connectionDefaults,
+    formattingDefaults,
+    logitBiasDefaults,
+    noteDefaults,
+    personaDefaults,
+    regexDefaults,
+    uiDefaults,
+    worldInfoDefaults,
+    type UiPrefs,
+  } from '../../state/prefs.ts';
+  import { profileDefaults } from '../../state/profiles.ts';
+  import { applyPendingImport, session } from '../../state/session.svelte.ts';
   import { settings } from '../../state/settings.svelte.ts';
   import { errorText, ui } from '../../state/ui.svelte.ts';
 
@@ -10,6 +27,79 @@
   const chatPrefs = $derived(settings.get('chat', chatDefaults));
 
   const setUi = (patch: Partial<UiPrefs>) => settings.update('ui', patch);
+
+  let importInput = $state<HTMLInputElement>();
+  let importSecrets = $state(false);
+  let importing = $state(false);
+  let report = $state<StImportReport | null>(null);
+
+  async function runImport(files: FileList | null) {
+    const file = files?.[0];
+    if (!file) return;
+    importing = true;
+    report = null;
+    try {
+      report = await api.importSillyTavern(file, { secrets: importSecrets });
+      await session.refresh();
+      await applyPendingImport();
+    } catch (error) {
+      ui.toast(errorText(error), 'error');
+    } finally {
+      importing = false;
+      if (importInput) importInput.value = '';
+    }
+  }
+
+  const skippedName = (kind: string) => t(`import.kind.${kind}` as MessageKey);
+
+  let exporting = $state(false);
+  async function runExport() {
+    exporting = true;
+    try {
+      const names = await api.stExportNames();
+      const formatting = { ...formattingDefaults, ...settings.get('formatting', formattingDefaults) };
+      const connection = settings.get('connection', connectionDefaults);
+      const template = async (kind: string, id: string | null | undefined, fallback?: string) => {
+        const list = library.presets.filter((p) => p.kind === kind);
+        const info = list.find((p) => p.id === id) ?? list.find((p) => p.name === fallback) ?? list[0];
+        return info ? { name: info.name, data: (await api.getPreset(info.id)).data } : undefined;
+      };
+      const [instruct, context, sysprompt, textgen] = await Promise.all([
+        template('instruct', formatting.instructId, 'Alpaca'),
+        template('context', formatting.contextId, 'Default'),
+        template('sysprompt', formatting.syspromptId, 'Neutral - Chat'),
+        template('textgen', connection.text?.presetId, 'Default'),
+      ]);
+      const stSettings = toStSettings({
+        formatting,
+        logitbias: settings.get('logitbias', logitBiasDefaults),
+        profiles: settings.get('profiles', profileDefaults),
+        templates: { instruct, context, sysprompt, textgen },
+        names,
+        connection: settings.get('connection', connectionDefaults),
+        chat: settings.get('chat', chatDefaults),
+        worldinfo: settings.get('worldinfo', worldInfoDefaults),
+        note: settings.get('note', noteDefaults),
+        persona: settings.get('persona', personaDefaults),
+        regex: settings.get('regex', regexDefaults),
+        variables: settings.get('variables', {}) as Record<string, unknown>,
+        presetNames: Object.fromEntries(
+          library.presets.filter((p) => p.kind === 'openai').map((p) => [p.id, p.name]),
+        ),
+      });
+      const blob = await api.exportSillyTavern(stSettings);
+      const a = Object.assign(document.createElement('a'), {
+        href: URL.createObjectURL(blob),
+        download: 'sillytavern-data.zip',
+      });
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    } catch (error) {
+      ui.toast(errorText(error), 'error');
+    } finally {
+      exporting = false;
+    }
+  }
 
   async function changePassword() {
     const current = session.user?.hasPassword
@@ -76,6 +166,13 @@
         onchange={(e) => setUi({ showTimestamps: e.currentTarget.checked })}
       />{t('settings.timestamps')}</label
     >
+    <label class="check"
+      ><input
+        type="checkbox"
+        checked={prefs.showTokenCounts}
+        onchange={(e) => setUi({ showTokenCounts: e.currentTarget.checked })}
+      />{t('settings.tokenCounts')}</label
+    >
   </section>
 
   <section>
@@ -94,6 +191,17 @@
         onchange={(e) => setUi({ externalMedia: e.currentTarget.checked })}
       />{t('settings.externalMedia')}</label
     >
+    <label class="field">
+      <span>{t('settings.mediaDisplay')}</span>
+      <select
+        class="select"
+        value={prefs.mediaDisplay ?? 'list'}
+        onchange={(e) => setUi({ mediaDisplay: e.currentTarget.value as 'list' | 'gallery' })}
+      >
+        <option value="list">{t('settings.mediaList')}</option>
+        <option value="gallery">{t('settings.mediaGallery')}</option>
+      </select>
+    </label>
     <label class="check"
       ><input
         type="checkbox"
@@ -129,23 +237,57 @@
         onchange={(e) => settings.update('chat', { reasoningAutoParse: e.currentTarget.checked })}
       />{t('settings.reasoningParse')}</label
     >
-    {#if chatPrefs.reasoningAutoParse}
+    <label class="check"
+      ><input
+        type="checkbox"
+        checked={chatPrefs.reasoningAddToPrompts}
+        onchange={(e) => settings.update('chat', { reasoningAddToPrompts: e.currentTarget.checked })}
+      />{t('settings.reasoningAddToPrompts')}</label
+    >
+    {#if chatPrefs.reasoningAddToPrompts}
+      <label class="field"
+        ><span>{t('settings.reasoningMaxAdditions')}</span><input
+          class="input"
+          type="number"
+          min="0"
+          value={chatPrefs.reasoningMaxAdditions}
+          onchange={(e) => settings.update('chat', { reasoningMaxAdditions: Number(e.currentTarget.value) })}
+        /></label
+      >
+    {/if}
+    {#if chatPrefs.reasoningAutoParse || chatPrefs.reasoningAddToPrompts}
+      <!-- Textareas: templates may contain line breaks (e.g. "<think>" + newline). -->
       <div class="pair">
         <label class="field"
-          ><span>{t('settings.reasoningPrefix')}</span><input
-            class="input"
+          ><span>{t('settings.reasoningPrefix')}</span><textarea
+            class="textarea code"
+            rows="2"
+            spellcheck="false"
             value={chatPrefs.reasoningPrefix}
             onchange={(e) => settings.update('chat', { reasoningPrefix: e.currentTarget.value })}
-          /></label
+          ></textarea></label
         >
         <label class="field"
-          ><span>{t('settings.reasoningSuffix')}</span><input
-            class="input"
+          ><span>{t('settings.reasoningSuffix')}</span><textarea
+            class="textarea code"
+            rows="2"
+            spellcheck="false"
             value={chatPrefs.reasoningSuffix}
             onchange={(e) => settings.update('chat', { reasoningSuffix: e.currentTarget.value })}
-          /></label
+          ></textarea></label
         >
       </div>
+      {#if chatPrefs.reasoningAddToPrompts}
+        <label class="field"
+          ><span>{t('settings.reasoningSeparator')}</span><textarea
+            class="textarea code"
+            rows="2"
+            spellcheck="false"
+            value={chatPrefs.reasoningSeparator}
+            onchange={(e) => settings.update('chat', { reasoningSeparator: e.currentTarget.value })}
+          ></textarea></label
+        >
+      {/if}
     {/if}
   </section>
 
@@ -158,6 +300,63 @@
       value={prefs.customCss}
       onchange={(e) => setUi({ customCss: e.currentTarget.value })}></textarea>
     <small class="faint">{t('settings.customCssHint')}</small>
+  </section>
+
+  <section>
+    <h3>{t('import.title')}</h3>
+    <p class="faint hint">{t('import.intro')}</p>
+    <label class="check"><input type="checkbox" bind:checked={importSecrets} />{t('import.secrets')}</label>
+    <div class="actions">
+      <button class="btn" disabled={importing} onclick={() => importInput?.click()}
+        ><Icon name="upload" size={15} />{importing ? t('import.running') : t('import.choose')}</button
+      >
+    </div>
+    <p class="faint hint">{t('export.intro')}</p>
+    <div class="actions">
+      <button class="btn" disabled={exporting} onclick={runExport}
+        ><Icon name="download" size={15} />{exporting ? t('export.running') : t('export.button')}</button
+      >
+    </div>
+    <input
+      bind:this={importInput}
+      type="file"
+      accept=".zip,application/zip"
+      hidden
+      onchange={(e) => runImport(e.currentTarget.files)}
+    />
+    {#if report}
+      <div class="report" role="status">
+        <p>
+          {t('import.summary', {
+            characters: report.characters,
+            chats: report.chats,
+            lorebooks: report.lorebooks,
+            presets: report.presets,
+            personas: report.personas,
+            attachments: report.attachments,
+            secrets: report.secrets,
+          })}
+        </p>
+        {#if report.unchanged}<p class="faint">{t('import.unchanged', { count: report.unchanged })}</p>{/if}
+        {#if Object.keys(report.skipped).length}
+          <p class="faint">
+            {t('import.skipped', {
+              list: Object.entries(report.skipped)
+                .map(([kind, n]) => `${skippedName(kind)} ${n}`)
+                .join(', '),
+            })}
+          </p>
+        {/if}
+        {#if report.failures.length}
+          <p>{t('import.failures')}</p>
+          <ul>
+            {#each report.failures.slice(0, 20) as failure (failure.file)}<li>
+                <code>{failure.file}</code>: {failure.message}
+              </li>{/each}
+          </ul>
+        {/if}
+      </div>
+    {/if}
   </section>
 
   <section>
@@ -192,16 +391,27 @@
     grid-template-columns: 1fr 1fr;
     gap: 0.6rem;
   }
-  .code {
-    font-family: var(--bt-font-mono);
-    font-size: var(--bt-size-sm);
-  }
   .actions {
     display: flex;
     gap: 0.5rem;
     flex-wrap: wrap;
   }
   .version {
+    font-size: var(--bt-size-xs);
+  }
+  .hint {
+    font-size: var(--bt-size-xs);
+  }
+  .report {
+    display: grid;
+    gap: 0.35rem;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--bt-line);
+    border-radius: var(--bt-radius);
+    font-size: var(--bt-size-sm);
+  }
+  .report ul {
+    padding-inline-start: 1.1rem;
     font-size: var(--bt-size-xs);
   }
 </style>

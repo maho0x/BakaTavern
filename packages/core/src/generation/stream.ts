@@ -1,4 +1,5 @@
 import type { StreamDecoder, StreamDelta } from '../providers/types.ts';
+import { ToolCallCollector, toolCallsOf, type ModelToolCall } from '../tools.ts';
 
 export interface GenerationOutput {
   text: string;
@@ -7,6 +8,8 @@ export interface GenerationOutput {
   finishReason?: string;
   error?: string;
   usage?: Record<string, unknown>;
+  /** Tool calls the model made. */
+  toolCalls?: ModelToolCall[];
 }
 
 /** Folds deltas into the running output. */
@@ -31,6 +34,11 @@ export async function consumeStream(
   signal?: AbortSignal,
 ): Promise<GenerationOutput> {
   const output: GenerationOutput = { text: '', reasoning: '' };
+  const tools = new ToolCallCollector();
+  const apply = (delta: StreamDelta) => {
+    if (delta.event) tools.push(delta.event);
+    applyDelta(output, delta);
+  };
   const reader = body.getReader();
   let bytes = 0;
   try {
@@ -39,12 +47,14 @@ export async function consumeStream(
       const { done, value } = await reader.read();
       if (done) break;
       bytes += value.byteLength;
-      for (const delta of decoder.push(value)) applyDelta(output, delta);
+      for (const delta of decoder.push(value)) apply(delta);
       onUpdate(output, bytes);
     }
-    for (const delta of decoder.end()) applyDelta(output, delta);
+    for (const delta of decoder.end()) apply(delta);
   } finally {
     reader.releaseLock();
   }
+  const calls = tools.calls.length ? toolCallsOf(tools.calls) : [];
+  if (calls.length) output.toolCalls = calls;
   return output;
 }

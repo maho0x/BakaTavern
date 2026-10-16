@@ -31,6 +31,9 @@ function request(providerId: string, overrides: Partial<GenerationRequest> = {})
   };
 }
 
+/** Decoded deltas without the raw events they come with. */
+const content = (deltas: { event?: unknown }[]) => deltas.filter((d) => !('event' in d));
+
 describe('SSE parsing', () => {
   it('handles split chunks, CRLF and event names', () => {
     const parser = new SseParser();
@@ -62,7 +65,8 @@ describe('OpenAI-compatible', () => {
       max_tokens: 500,
       stop: ['\nAlice:'],
     });
-    expect(body.reasoning).toEqual({ effort: 'high' });
+    // As SillyTavern: OpenRouter always says whether to include the reasoning.
+    expect(body.reasoning).toEqual({ exclude: false, effort: 'high' });
     const openai = buildOpenAIBody(request('openai', { model: 'gpt-5.6-terra' }));
     expect(openai.max_completion_tokens).toBe(500);
     expect(openai.temperature).toBeUndefined();
@@ -75,8 +79,12 @@ describe('OpenAI-compatible', () => {
       'data: {"choices":[{"delta":{"reasoning_content":"think"}}]}\n\n' +
         'data: {"choices":[{"delta":{"content":"Hel"}}]}\n\ndata: {"choices":[{"delta":{"content":"lo"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n',
     );
-    expect(deltas).toEqual([{ reasoning: 'think' }, { text: 'Hel' }, { text: 'lo', finishReason: 'stop' }]);
-    expect(decoder.push('data: {"error":{"message":"rate limited"}}\n\n')).toEqual([
+    expect(content(deltas)).toEqual([
+      { reasoning: 'think' },
+      { text: 'Hel' },
+      { text: 'lo', finishReason: 'stop' },
+    ]);
+    expect(content(decoder.push('data: {"error":{"message":"rate limited"}}\n\n'))).toEqual([
       { error: 'rate limited' },
     ]);
   });
@@ -115,7 +123,7 @@ describe('Anthropic', () => {
       'event: content_block_delta\ndata: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Hi"}}\n\n',
       'event: message_delta\ndata: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":3}}\n\n',
     ].join('');
-    expect(decoder.push(stream)).toEqual([
+    expect(content(decoder.push(stream))).toEqual([
       { reasoning: 'hmm' },
       { text: 'Hi' },
       { finishReason: 'end_turn', usage: { output_tokens: 3 } },
@@ -153,7 +161,7 @@ describe('Gemini', () => {
     const deltas = decoder.push(
       'data: {"candidates":[{"content":{"parts":[{"text":"plan","thought":true},{"text":"Answer"}]}}]}\n\n',
     );
-    expect(deltas).toEqual([{ text: 'Answer', reasoning: 'plan' }]);
+    expect(content(deltas)).toEqual([{ text: 'Answer', reasoning: 'plan' }]);
   });
 });
 

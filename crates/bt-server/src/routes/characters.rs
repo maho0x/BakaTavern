@@ -312,7 +312,8 @@ fn parse_card_file(bytes: &[u8]) -> Result<(Value, Option<Vec<u8>>), ApiError> {
     }
 }
 
-async fn import_one(
+/// Imports one card file (PNG, JSON or CHARX), remembering its file name as the source.
+pub(crate) async fn import_one(
     state: &AppState,
     user_id: &str,
     file_name: &str,

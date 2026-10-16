@@ -536,3 +536,519 @@ async fn sillytavern_chats_round_trip_losslessly() {
         assert_eq!(b, a, "line {} differs", i + 1);
     }
 }
+
+#[tokio::test]
+async fn branches_and_checkpoints_link_back_like_sillytavern() {
+    let t = test_app();
+    let (_, imported) = t
+        .upload("/api/characters/import", "Aiko.png", &card_png("Aiko"), &[])
+        .await;
+    let id = imported["characters"][0]["id"].as_str().unwrap();
+    let (status, created) = t
+        .json(
+            "POST",
+            "/api/chats",
+            Some(json!({"characterId": id, "title": "Aiko - 2026", "messages": [
+                {"role": "assistant", "name": "Aiko", "swipes": [{"content": "Hello"}]},
+                {"role": "user", "name": "You", "swipes": [{"content": "Hi"}]},
+                {"role": "assistant", "name": "Aiko", "swipes": [{"content": "One"}, {"content": "Two"}]}
+            ]})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let chat_id = created["chat"]["id"].as_str().unwrap().to_string();
+    let branch = |body: Value| {
+        let uri = format!("/api/chats/{chat_id}/branch");
+        let t = &t;
+        async move { t.json("POST", &uri, Some(body)).await }
+    };
+
+    // Branches are named after the chat and listed on the message.
+    let (status, first) = branch(json!({"upTo": 1})).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(first["chat"]["title"], "Aiko - 2026 - Branch #1");
+    assert_eq!(first["chat"]["metadata"]["main_chat"], "Aiko - 2026");
+    assert_eq!(first["chat"]["messageCount"], 2);
+    let (_, second) = branch(json!({"upTo": 1})).await;
+    assert_eq!(second["chat"]["title"], "Aiko - 2026 - Branch #2");
+    assert_eq!(
+        second["message"]["extra"]["branches"],
+        json!(["Aiko - 2026 - Branch #1", "Aiko - 2026 - Branch #2"])
+    );
+
+    // A checkpoint at a chosen swipe; the message links to it.
+    let (status, checkpoint) = branch(json!({"upTo": 2, "checkpoint": true, "swipeId": 1})).await;
+    assert_eq!(status, StatusCode::OK, "{checkpoint}");
+    assert_eq!(checkpoint["chat"]["title"], "Aiko - 2026 - Checkpoint #1");
+    assert_eq!(
+        checkpoint["message"]["extra"]["bookmark_link"],
+        "Aiko - 2026 - Checkpoint #1"
+    );
+    let cid = checkpoint["chat"]["id"].as_str().unwrap();
+    let (_, copy) = t
+        .json("GET", &format!("/api/chats/{cid}/messages"), None)
+        .await;
+    assert_eq!(copy[2]["swipeId"], 1);
+
+    // Names are unique per character; bad indexes are refused.
+    let (status, taken) = branch(json!({"upTo": 0, "title": "Aiko - 2026 - Branch #1"})).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(taken["error"]["code"], "exists");
+    let (status, _) = branch(json!({"upTo": 7})).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = branch(json!({"upTo": 2, "swipeId": 5})).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn prompts_are_logged_per_generation() {
+    let t = test_app();
+    let (_, created) = t
+        .json("POST", "/api/chats", Some(json!({"title": "Notes"})))
+        .await;
+    let chat_id = created["chat"]["id"].as_str().unwrap().to_string();
+    let uri = format!("/api/chats/{chat_id}/prompts");
+    for (at, total) in [
+        ("2026-10-16T10:00:00.000Z", 10),
+        ("2026-10-16T10:01:00.000Z", 12),
+    ] {
+        let (status, _) = t
+            .json(
+                "POST",
+                &uri,
+                Some(json!({"startedAt": at, "data": {"total": total}})),
+            )
+            .await;
+        assert_eq!(status, StatusCode::NO_CONTENT);
+    }
+    let (status, log) = t
+        .json(
+            "GET",
+            &format!("{uri}?startedAt=2026-10-16T10:01:00.000Z"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        log,
+        json!({"prompt": {"total": 12}, "previous": {"total": 10}})
+    );
+    let (_, none) = t
+        .json(
+            "GET",
+            &format!("{uri}?startedAt=2026-10-16T09:00:00.000Z"),
+            None,
+        )
+        .await;
+    assert_eq!(none, json!({"prompt": null, "previous": null}));
+    // Only the owner's chats.
+    let (status, _) = t
+        .json("GET", "/api/chats/nope/prompts?startedAt=x", None)
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn taken_names_are_reported_as_exists() {
+    let t = test_app();
+    let (status, _) = t
+        .json("POST", "/api/lorebooks", Some(json!({"name": "Eldoria"})))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, body) = t
+        .json("POST", "/api/lorebooks", Some(json!({"name": "Eldoria"})))
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body["error"]["code"], "exists");
+}
+
+#[tokio::test]
+async fn seeding_presets_keeps_existing_ones() {
+    let t = test_app();
+    let (status, _) = t
+        .json(
+            "PUT",
+            "/api/presets",
+            Some(json!({"kind": "context", "name": "Default", "data": {"story_string": "mine"}})),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let seed = json!({"presets": [
+        {"kind": "context", "name": "Default", "data": {"story_string": "theirs"}},
+        {"kind": "instruct", "name": "ChatML", "data": {"input_sequence": "<|im_start|>user"}},
+    ]});
+    let (status, created) = t
+        .json("POST", "/api/presets/seed", Some(seed.clone()))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(created.as_array().unwrap().len(), 1);
+    assert_eq!(created[0]["name"], "ChatML");
+    // Seeding again creates nothing; the user's own preset is untouched.
+    let (_, again) = t.json("POST", "/api/presets/seed", Some(seed)).await;
+    assert_eq!(again, json!([]));
+    let (_, list) = t.json("GET", "/api/presets?kind=context", None).await;
+    let id = list[0]["id"].as_str().unwrap().to_string();
+    let (_, preset) = t.json("GET", &format!("/api/presets/{id}"), None).await;
+    assert_eq!(preset["data"]["story_string"], "mine");
+}
+
+#[tokio::test]
+async fn tokenizer_files_come_from_the_cache() {
+    let t = test_app();
+    // A file placed in the cache by hand is served without downloading.
+    let dir = t._dir.path().join("cache").join("tokenizers");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("llama3.json"), b"{\"model\":{}}").unwrap();
+    let res = t
+        .send(
+            Request::get("/api/tokenizers/llama3.json")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    assert_eq!(&bytes[..], b"{\"model\":{}}");
+    // Only known tokenizer files.
+    let res = t
+        .send(
+            Request::get("/api/tokenizers/secret.key")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    assert_eq!(res.status(), StatusCode::NOT_FOUND);
+}
+
+/// A SillyTavern user directory as a backup zip: a card with chats, a lorebook, presets, a
+/// persona with avatar, tags, keys and things BakaTavern does not import yet.
+fn st_backup_zip() -> Vec<u8> {
+    use std::io::Write;
+    let chat = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/st/chats/Seraphina - 2026-10-14@23h56m12s.jsonl"
+    ))
+    .unwrap();
+    let settings = json!({
+        "power_user": {
+            "personas": { "user-default.png": "Mika", "user-2.png": "Ren" },
+            "persona_descriptions": {
+                "user-default.png": { "description": "{{user}} is a nurse.", "position": 4, "depth": 1, "role": 1, "lorebook": "", "title": "Night shift" },
+                "user-2.png": { "description": "A pilot." }
+            },
+            "default_persona": "user-default.png"
+        },
+        "tags": [{ "id": "1700000000000", "name": "favorite", "folder_type": "OPEN", "color": "#ff0000" }],
+        "tag_map": { "Seraphina.png": ["1700000000000"] },
+        "extension_settings": { "regex": [{ "id": "r1", "scriptName": "Shout", "findRegex": "/a/g", "replaceString": "A" }] },
+        "world_info_settings": { "world_info": { "globalSelect": ["Eldoria"] } }
+    });
+    let secrets = json!({
+        "_migrated": true,
+        "api_key_openai": [{ "id": "k1", "value": "sk-test-1234567890", "label": "work", "active": true }],
+        "api_key_tavily": [{ "id": "k2", "value": "tvly", "label": "", "active": true }]
+    });
+    let files: Vec<(&str, Vec<u8>)> = vec![
+        ("settings.json", settings.to_string().into_bytes()),
+        ("secrets.json", secrets.to_string().into_bytes()),
+        ("characters/Seraphina.png", card_png("Seraphina")),
+        ("chats/Seraphina/Seraphina - 2026-10-14@23h56m12s.jsonl", chat.into_bytes()),
+        ("chats/Unknown/Orphan.jsonl", b"{}\n".to_vec()),
+        (
+            "chats/Seraphina/Photos.jsonl",
+            [
+                json!({ "user_name": "Mika", "character_name": "Seraphina", "create_date": "2026-10-15@10h00m00s", "chat_metadata": {} }),
+                json!({ "name": "Mika", "is_user": true, "is_system": false, "send_date": "2026-10-15T10:00:00.000Z", "mes": "Look!",
+                    "extra": {
+                        "media": [{ "url": "user/images/Seraphina/photo.png", "type": "image", "title": "photo.png", "source": "upload" }],
+                        "files": [{ "url": "user/files/1760000000000_note.txt", "name": "note.txt", "size": 5 }, { "url": "user/files/gone.txt", "name": "gone.txt" }]
+                    } }),
+            ]
+            .iter()
+            .map(Value::to_string)
+            .collect::<Vec<_>>()
+            .join("\n")
+            .into_bytes(),
+        ),
+        ("user/images/Seraphina/photo.png", bt_formats::png::placeholder()),
+        ("user/files/1760000000000_note.txt", b"Notes".to_vec()),
+        (
+            "worlds/Eldoria.json",
+            json!({ "entries": { "0": { "uid": 0, "key": ["glade"], "content": "A quiet glade." } } })
+                .to_string()
+                .into_bytes(),
+        ),
+        ("OpenAI Settings/My Preset.json", json!({ "temp_openai": 0.7 }).to_string().into_bytes()),
+        ("instruct/ChatML.json", json!({ "name": "ChatML", "input_sequence": "<|im_start|>user" }).to_string().into_bytes()),
+        ("User Avatars/user-default.png", bt_formats::png::placeholder()),
+        ("groups/1.json", b"{}".to_vec()),
+        ("backgrounds/rain.jpg", b"jpeg".to_vec()),
+    ];
+    let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+    let options = zip::write::SimpleFileOptions::default();
+    for (path, bytes) in files {
+        zip.start_file(path, options).unwrap();
+        zip.write_all(&bytes).unwrap();
+    }
+    zip.finish().unwrap().into_inner()
+}
+
+#[tokio::test]
+async fn sillytavern_backups_import_once() {
+    let t = test_app();
+    let backup = st_backup_zip();
+    let (status, report) = t
+        .upload(
+            "/api/import/st",
+            "backup.zip",
+            &backup,
+            &[("secrets", "true")],
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{report}");
+    assert_eq!(report["characters"], 1);
+    assert_eq!(report["chats"], 2);
+    assert_eq!(report["lorebooks"], 1);
+    assert_eq!(report["presets"], 2);
+    assert_eq!(report["personas"], 2);
+    assert_eq!(report["secrets"], 1);
+    assert_eq!(report["attachments"], 2);
+    // Two links point at files the backup does not have (one in the fixture chat).
+    assert_eq!(report["skipped"]["missingAttachments"], 2);
+    assert_eq!(report["settings"], true);
+    assert_eq!(report["skipped"]["groups"], 1);
+    assert_eq!(report["skipped"]["backgrounds"], 1);
+    assert_eq!(report["skipped"]["chatsWithoutCharacter"], 1);
+    assert_eq!(report["skipped"]["otherKeys"], 1);
+    assert_eq!(report["failures"], json!([]));
+
+    let (_, characters) = t.json("GET", "/api/characters", None).await;
+    let seraphina = &characters[0];
+    assert_eq!(seraphina["sourceFile"], "Seraphina.png");
+    let (_, chats) = t
+        .json(
+            "GET",
+            &format!(
+                "/api/characters/{}/chats",
+                seraphina["id"].as_str().unwrap()
+            ),
+            None,
+        )
+        .await;
+    let titles: Vec<&str> = chats
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|c| c["title"].as_str().unwrap())
+        .collect();
+    assert!(titles.contains(&"Seraphina - 2026-10-14@23h56m12s"));
+    // Attached files move into the file store; the messages point there.
+    let photos = chats
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["title"] == "Photos")
+        .unwrap();
+    let (_, messages) = t
+        .json(
+            "GET",
+            &format!("/api/chats/{}/messages", photos["id"].as_str().unwrap()),
+            None,
+        )
+        .await;
+    let extra = &messages[0]["extra"];
+    let image = extra["media"][0]["url"].as_str().unwrap();
+    assert!(image.starts_with("/api/files/"), "{image}");
+    let note = extra["files"][0]["url"].as_str().unwrap();
+    let res = t
+        .send(Request::get(note).body(Body::empty()).unwrap())
+        .await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(
+        &res.into_body().collect().await.unwrap().to_bytes()[..],
+        b"Notes"
+    );
+    // A file that was not in the backup keeps its link.
+    assert_eq!(extra["files"][1]["url"], "user/files/gone.txt");
+    let (_, tags) = t.json("GET", "/api/tags", None).await;
+    let favorite = tags
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == "favorite")
+        .unwrap();
+    assert_eq!(favorite["folder"], "open");
+    assert!(
+        seraphina["tags"]
+            .as_array()
+            .unwrap()
+            .contains(&favorite["id"])
+    );
+
+    let (_, personas) = t.json("GET", "/api/personas", None).await;
+    let mika = personas
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["name"] == "Mika")
+        .unwrap();
+    assert_eq!(mika["position"], 4);
+    assert_eq!(mika["isDefault"], true);
+    assert_eq!(mika["sourceFile"], "user-default.png");
+    assert!(mika["avatar"].is_string());
+    assert_eq!(mika["data"]["title"], "Night shift");
+
+    let (_, secrets) = t.json("GET", "/api/secrets", None).await;
+    assert_eq!(secrets[0]["provider"], "openai");
+    assert_eq!(secrets[0]["label"], "work");
+    assert_eq!(secrets[0]["allowedOrigins"], json!([]));
+
+    let (_, stash) = t.json("GET", "/api/settings/st_import", None).await;
+    assert_eq!(
+        stash["data"]["settings"]["extension_settings"]["regex"][0]["scriptName"],
+        "Shout"
+    );
+    assert_eq!(
+        stash["data"]["characters"]["Seraphina.png"],
+        seraphina["id"]
+    );
+    assert!(stash["data"]["presets"]["openai/My Preset"].is_string());
+    assert_eq!(stash["data"]["secrets"][0]["active"], true);
+    assert_eq!(stash["data"]["secrets"][0]["stId"], "k1");
+
+    // A second import changes nothing that is already here.
+    let (_, again) = t.upload("/api/import/st", "backup.zip", &backup, &[]).await;
+    assert_eq!(again["characters"], 0);
+    assert_eq!(again["chats"], 0);
+    assert_eq!(again["lorebooks"], 0);
+    assert_eq!(again["personas"], 0);
+    assert_eq!(again["presets"], 2);
+    assert_eq!(again["unchanged"], 6);
+    let (_, characters) = t.json("GET", "/api/characters", None).await;
+    assert_eq!(characters.as_array().unwrap().len(), 1);
+}
+
+fn zip_entries(bytes: &[u8]) -> std::collections::BTreeMap<String, Vec<u8>> {
+    use std::io::Read;
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+    let mut out = std::collections::BTreeMap::new();
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i).unwrap();
+        let mut data = Vec::new();
+        file.read_to_end(&mut data).unwrap();
+        out.insert(file.name().unwrap().to_string(), data);
+    }
+    out
+}
+
+#[tokio::test]
+async fn exports_a_sillytavern_folder_that_imports_again() {
+    let t = test_app();
+    let (status, _) = t
+        .upload("/api/import/st", "backup.zip", &st_backup_zip(), &[])
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, names) = t.json("GET", "/api/export/st/names", None).await;
+    let (_, characters) = t.json("GET", "/api/characters", None).await;
+    let seraphina = characters[0]["id"].as_str().unwrap();
+    assert_eq!(names["characters"][seraphina], "Seraphina.png");
+
+    let req = Request::post("/api/export/st")
+        .header("x-bt-client", "1")
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            json!({ "settings": { "world_info_settings": { "world_info": { "globalSelect": ["Eldoria"] } } } })
+                .to_string(),
+        ))
+        .unwrap();
+    let res = t.send(req).await;
+    assert_eq!(res.status(), StatusCode::OK);
+    assert_eq!(res.headers()[header::CONTENT_TYPE], "application/zip");
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    let files = zip_entries(&bytes);
+    let paths: Vec<&str> = files.keys().map(String::as_str).collect();
+    for expected in [
+        "characters/Seraphina.png",
+        "chats/Seraphina/Seraphina - 2026-10-14@23h56m12s.jsonl",
+        "worlds/Eldoria.json",
+        "OpenAI Settings/My Preset.json",
+        "instruct/ChatML.json",
+        "User Avatars/user-default.png",
+        "settings.json",
+    ] {
+        assert!(
+            paths.contains(&expected),
+            "{expected} missing from {paths:?}"
+        );
+    }
+    // The chat comes back exactly as it was imported.
+    let original = std::fs::read_to_string(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/st/chats/Seraphina - 2026-10-14@23h56m12s.jsonl"
+    ))
+    .unwrap();
+    let exported =
+        String::from_utf8(files["chats/Seraphina/Seraphina - 2026-10-14@23h56m12s.jsonl"].clone())
+            .unwrap();
+    let as_json = |text: &str| -> Vec<Value> {
+        text.lines()
+            .filter(|l| !l.trim().is_empty())
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect()
+    };
+    assert_eq!(as_json(&exported), as_json(&original));
+    // Attachments go back into SillyTavern's user folder.
+    let photos =
+        as_json(&String::from_utf8(files["chats/Seraphina/Photos.jsonl"].clone()).unwrap());
+    let image = photos[1]["extra"]["media"][0]["url"].as_str().unwrap();
+    assert!(
+        image.starts_with("user/images/Seraphina/") && image.ends_with(".png"),
+        "{image}"
+    );
+    assert_eq!(files[image], bt_formats::png::placeholder());
+    let note = photos[1]["extra"]["files"][0]["url"].as_str().unwrap();
+    assert!(
+        note.starts_with("user/files/") && note.ends_with(".txt"),
+        "{note}"
+    );
+    assert_eq!(files[note], b"Notes");
+    let card = bt_formats::card::read_png(&files["characters/Seraphina.png"]).unwrap();
+    assert_eq!(card["data"]["name"], "Seraphina");
+    let settings: Value = serde_json::from_slice(&files["settings.json"]).unwrap();
+    assert_eq!(
+        settings["world_info_settings"]["world_info"]["globalSelect"][0],
+        "Eldoria"
+    );
+    assert_eq!(
+        settings["power_user"]["personas"]["user-default.png"],
+        "Mika"
+    );
+    assert_eq!(
+        settings["power_user"]["persona_descriptions"]["user-default.png"]["position"],
+        4
+    );
+    assert_eq!(
+        settings["power_user"]["default_persona"],
+        "user-default.png"
+    );
+    let tag_id = settings["tag_map"]["Seraphina.png"][0].as_str().unwrap();
+    let favorite = settings["tags"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["id"] == tag_id);
+    assert!(favorite.is_some());
+
+    // Back into a fresh BakaTavern.
+    let fresh = test_app();
+    let (status, report) = fresh
+        .upload("/api/import/st", "export.zip", &bytes, &[])
+        .await;
+    assert_eq!(status, StatusCode::OK, "{report}");
+    assert_eq!(report["characters"], 1);
+    assert_eq!(report["chats"], 2);
+    assert_eq!(report["attachments"], 2);
+    assert_eq!(report["lorebooks"], 1);
+    assert_eq!(report["presets"], 2);
+    assert_eq!(report["personas"], 2);
+}

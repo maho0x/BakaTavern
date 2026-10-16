@@ -143,13 +143,13 @@ export class MacroEngine {
   ): string {
     if (node.kind === 'variable') return this.#evaluateVariable(node, env, offset, depth);
 
+    // Dynamic macros take precedence over registered ones (SillyTavern `#resolveMacro`).
+    const dynamic =
+      env.dynamic && Object.entries(env.dynamic).find(([k]) => k.toLowerCase() === node.name.toLowerCase());
+    if (dynamic) return this.#postProcess(typeof dynamic[1] === 'function' ? dynamic[1]() : dynamic[1], env);
+
     const def = this.registry.get(node.name);
-    if (!def) {
-      const dynamic =
-        env.dynamic && Object.entries(env.dynamic).find(([k]) => k.toLowerCase() === node.name.toLowerCase());
-      if (dynamic) return typeof dynamic[1] === 'function' ? dynamic[1]() : dynamic[1];
-      return node.raw;
-    }
+    if (!def) return node.raw;
 
     const flags = { preserveWhitespace: node.flags.includes('#') };
     const rawArgs = node.args.map((a) => a.raw);
@@ -184,7 +184,16 @@ export class MacroEngine {
       // As SillyTavern: a macro that cannot be evaluated stays as written.
       return node.raw;
     }
-    return normalizeResult(result);
+    return this.#postProcess(normalizeResult(result), env);
+  }
+
+  #postProcess(value: string, env: MacroEnv): string {
+    if (!env.postProcess) return value;
+    try {
+      return env.postProcess(value);
+    } catch {
+      return value;
+    }
   }
 
   #evaluateVariable(node: MacroNode, env: MacroEnv, offset: number, depth: number): string {

@@ -53,41 +53,83 @@ export function convertGeminiMessages(
   }
   const noPrefillModel = /gemini-3\.[67]-flash|gemini-3\.5-flash-lite/.test(model);
   const contents: Content[] = [];
+  /** Tool call id → function name, for the results that answer them. */
+  const toolNames: Record<string, string> = {};
   messages.forEach((message, index) => {
     let role: Content['role'];
     if (message.role === 'assistant')
       role = noPrefillModel && index === messages.length - 1 ? 'user' : 'model';
     else role = 'user';
     const parts: Part[] = [];
-    const items =
-      typeof message.content === 'string'
-        ? [{ type: 'text' as const, text: message.content }]
-        : message.content;
-    for (const item of items) {
-      if (item.type === 'text') parts.push({ text: prefixName(message, item.text, names) });
-      else if (item.type === 'image_url' || item.type === 'video_url' || item.type === 'audio_url') {
-        const url =
-          item.type === 'image_url'
-            ? item.image_url.url
-            : item.type === 'video_url'
-              ? item.video_url.url
-              : item.audio_url.url;
-        if (url.startsWith('data:')) {
-          const [header, data] = url.split(',');
-          parts.push({
-            inlineData: { mimeType: /data:([^;]+)/.exec(header ?? '')?.[1] ?? 'image/png', data },
-          });
+    const addDataUrl = (url: string, defaultMime: string, detail?: string) => {
+      if (!url?.startsWith('data:')) return;
+      const [header, data] = url.split(',');
+      const part: Part = {
+        inlineData: { mimeType: /data:([^;]+)/.exec(header ?? '')?.[1] || defaultMime, data },
+      };
+      const resolution = detail === 'low' || detail === 'high' ? `media_resolution_${detail}` : null;
+      if (/gemini-3/.test(model) && resolution) part.mediaResolution = { level: resolution };
+      parts.push(part);
+    };
+    if (!Array.isArray(message.content) && message.tool_calls?.length) {
+      for (const call of message.tool_calls) {
+        parts.push({
+          functionCall: {
+            name: call.function.name,
+            args: tryParse(call.function.arguments) ?? call.function.arguments,
+          },
+          ...(call.signature ? { thoughtSignature: call.signature } : {}),
+        });
+        toolNames[call.id] = call.function.name;
+      }
+    } else if (!Array.isArray(message.content) && message.tool_call_id) {
+      const name = toolNames[message.tool_call_id] ?? 'unknown';
+      parts.push({ functionResponse: { name, response: { name, content: String(message.content ?? '') } } });
+    } else {
+      const items = Array.isArray(message.content)
+        ? message.content
+        : [{ type: 'text' as const, text: String(message.content ?? '') }];
+      for (const item of items) {
+        if (item.type === 'text') parts.push({ text: prefixName(message, item.text, names) });
+        else if (item.type === 'image_url')
+          addDataUrl(item.image_url.url, 'image/png', item.image_url.detail);
+        else if (item.type === 'video_url')
+          addDataUrl(item.video_url.url, 'video/mp4', item.video_url.detail);
+        else if (item.type === 'audio_url') addDataUrl(item.audio_url.url, 'audio/mpeg');
+      }
+    }
+    // Stored thought signatures go back; Gemini 3 needs a placeholder for calls without one.
+    if (/gemini-3/.test(model) || /gemini-2\.5/.test(model)) {
+      for (const part of parts) {
+        if (message.signature && typeof part.text === 'string') {
+          part.thoughtSignature = message.signature;
+        } else if (/gemini-3/.test(model)) {
+          if (part.functionCall && !part.thoughtSignature) part.thoughtSignature = SKIP_SIGNATURE;
+          if (
+            /-image/.test(model) &&
+            role === 'model' &&
+            (typeof part.text === 'string' || part.inlineData)
+          ) {
+            part.thoughtSignature = SKIP_SIGNATURE;
+          }
         }
       }
     }
     const last = contents[contents.length - 1];
     if (index > 0 && last && last.role === role) {
       for (const part of parts) {
-        if (typeof part.text === 'string') {
+        if (part.text) {
           const textPart = last.parts.find((p) => typeof p.text === 'string');
           if (textPart) textPart.text += '\n\n' + part.text;
           else last.parts.push(part);
-        } else {
+        }
+        if (
+          part.inlineData ||
+          part.functionCall ||
+          part.functionResponse ||
+          part.thoughtSignature ||
+          part.mediaResolution
+        ) {
           last.parts.push(part);
         }
       }
@@ -96,6 +138,16 @@ export function convertGeminiMessages(
     }
   });
   return { contents, systemInstruction: { parts: system.map((text) => ({ text })) } };
+}
+
+const SKIP_SIGNATURE = 'skip_thought_signature_validator';
+
+function tryParse(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 export const GEMINI_SAFETY = [
@@ -131,7 +183,7 @@ export function buildGeminiBody(request: GenerationRequest): Record<string, unkn
   const useSystemPrompt = !!request.useSystemPrompt && !/gemma-3/.test(model);
   const converted = convertGeminiMessages(request.messages, model, useSystemPrompt, request.names);
   const generationConfig: Record<string, unknown> = {
-    stopSequences: params.stop?.length ? params.stop : undefined,
+    stopSequences: geminiStops(params.stop),
     candidateCount: 1,
     maxOutputTokens: params.max_tokens,
     temperature: params.temperature,
@@ -161,6 +213,17 @@ export function buildGeminiBody(request: GenerationRequest): Record<string, unkn
   };
   if (useSystemPrompt && converted.systemInstruction.parts.length)
     body.systemInstruction = converted.systemInstruction;
+  if (request.tools?.length && !/gemma-3/.test(model)) {
+    const declarations = request.tools.map((tool) => {
+      const parameters = { ...tool.parameters };
+      delete parameters.$schema;
+      const properties = parameters.properties as Record<string, unknown> | undefined;
+      const empty = properties && Object.keys(properties).length === 0;
+      return { name: tool.name, description: tool.description, ...(empty ? {} : { parameters }) };
+    });
+    body.tools = [{ function_declarations: declarations }];
+    body.toolConfig = { functionCallingConfig: { mode: 'AUTO' } };
+  }
   Object.assign(body, request.extraBody ?? {});
   for (const key of request.excludeBody ?? []) delete body[key];
   return body;
@@ -205,7 +268,8 @@ class GeminiDecoder implements StreamDecoder {
 
   #event(data: string): StreamDelta[] {
     try {
-      return [deltaFrom(JSON.parse(data))];
+      const json = JSON.parse(data);
+      return [{ event: json }, deltaFrom(json)];
     } catch {
       return [];
     }
@@ -232,3 +296,9 @@ export const gemini: ProviderAdapter = {
   createDecoder: () => new GeminiDecoder(),
   parseResponse: (body) => deltaFrom(body as Record<string, unknown>),
 };
+
+/** SillyTavern keeps the first five stop strings and drops those outside 1-16 characters. */
+function geminiStops(stop: readonly string[] | undefined): string[] | undefined {
+  const kept = (stop ?? []).slice(0, 5).filter((x) => x.length >= 1 && x.length <= 16);
+  return kept.length ? kept : undefined;
+}

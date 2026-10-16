@@ -1,21 +1,39 @@
 import type { ChangeEvent, Character, Chat, JobInfo, Message, Persona, Swipe } from '@bakatavern/api-client';
 import { ApiError, randomId } from '@bakatavern/api-client';
 import {
-  getProvider,
+  toolInvocationsText,
+  type ModelToolCall,
+  branchChatTitle,
+  getRegexedString,
   greetingSwipes,
+  objectVariables,
+  RegexPlacement,
   type GenerationOutput,
   type GenerationType,
-  type ProviderDefinition,
+  type MacroEnv,
+  type ProviderAdapter,
+  type RegexParams,
+  type RegexSubstitute,
 } from '@bakatavern/core';
 
 import { api } from '../api.ts';
+import { offeredTools, runToolCalls } from '../generation/tools.ts';
+import {
+  attachmentKind,
+  isTextFile,
+  uploadAttachments,
+  type PendingAttachment,
+} from '../generation/attachments.ts';
 import {
   activeConnection,
+  activeFormatting,
   finalizeOutput,
+  itemizeGeneration,
   macros,
   newAssistantMessage,
   prepare,
   readResponse,
+  responseAdapter,
   swipeInfo,
   type JobMeta,
   type Target,
@@ -23,6 +41,7 @@ import {
 import { t } from '../i18n/index.svelte.ts';
 import { library } from './library.svelte.ts';
 import { chatDefaults, noteDefaults, personaDefaults } from './prefs.ts';
+import { regex } from './regex.svelte.ts';
 import { settings } from './settings.svelte.ts';
 import { errorText, ui } from './ui.svelte.ts';
 
@@ -34,6 +53,13 @@ export interface Generation {
   reasoning: string;
   startedAt: number;
   controller: AbortController;
+  /** The result is stored: stop showing the streamed copy (cleanup requests may still run). */
+  stored?: boolean;
+  /** Tool rounds before this generation, and whether tools were offered with it. */
+  toolDepth?: number;
+  toolsOffered?: boolean;
+  /** Called tools were run: generate again with their results. */
+  continueWithTools?: boolean;
 }
 
 const store = {
@@ -90,6 +116,46 @@ class ChatStore {
 
   userName = $derived(this.persona?.name ?? 'User');
 
+  /** Regex scripts in effect for this chat (global, preset, character). */
+  regexScripts = $derived(regex.scriptsFor(this.character));
+
+  /** Depth of every visible message (0 = the last one), for regex depth limits. */
+  regexDepths = $derived.by(() => {
+    const visible = this.messages.filter((m) => !m.hidden);
+    return new Map(visible.map((m, i) => [m.id, visible.length - i - 1]));
+  });
+
+  /** Macros for regex scripts outside of generation (variables are read from copies). */
+  regexSubstitute(): RegexSubstitute {
+    const card = (this.character?.card as { data?: Record<string, unknown> } | undefined)?.data ?? {};
+    const env: MacroEnv = {
+      user: this.userName,
+      char: this.character?.name ?? '',
+      description: String(card.description ?? ''),
+      personality: String(card.personality ?? ''),
+      scenario: String(card.scenario ?? ''),
+      persona: this.persona?.description ?? '',
+      chatId: this.chat?.id,
+      localVariables: objectVariables({
+        ...($state.snapshot(this.chat?.metadata.variables) as Record<string, unknown> | undefined),
+      }),
+      globalVariables: objectVariables({ ...(settings.get('variables', {}) as Record<string, unknown>) }),
+    };
+    return (text, options) =>
+      macros.evaluate(text, {
+        ...env,
+        ...(options?.charName !== undefined ? { char: options.charName } : {}),
+        postProcess: options?.postProcess,
+      });
+  }
+
+  /** Runs this chat's regex scripts for a placement. */
+  applyRegex(text: string, placement: number, params: RegexParams = {}): string {
+    const scripts = this.regexScripts;
+    if (!scripts.length || !text) return text;
+    return getRegexedString(text, placement, scripts, this.regexSubstitute(), params);
+  }
+
   async restoreLast() {
     const characterId = store.get('bt.lastCharacter');
     if (characterId && library.character(characterId))
@@ -103,6 +169,7 @@ class ChatStore {
       const [character, chats] = await Promise.all([api.getCharacter(id), api.listChats(id)]);
       this.characterId = id;
       this.character = character;
+      regex.checkCharacter(character);
       this.chats = chats;
       store.set('bt.lastCharacter', id);
       const chatId = chats.find((c) => c.id === preferChatId)?.id ?? chats[0]?.id;
@@ -120,6 +187,30 @@ class ChatStore {
     if (this.characterId) this.character = await api.getCharacter(this.characterId);
   }
 
+  /**
+   * Changes the open character's card, starting from its latest stored version (retried once
+   * when it changed elsewhere meanwhile).
+   */
+  async updateCard(mutate: (card: Record<string, unknown> & { data?: Record<string, unknown> }) => void) {
+    const id = this.character?.id;
+    if (!id) return;
+    for (let attempt = 0; ; attempt++) {
+      const current = await api.getCharacter(id);
+      const card = structuredClone(current.card) as Record<string, unknown> & {
+        data?: Record<string, unknown>;
+      };
+      mutate(card);
+      try {
+        const updated = await api.updateCharacter(id, card, current.rev);
+        if (this.character?.id === id) this.character = updated;
+        library.upsertCharacter(updated);
+        return;
+      } catch (error) {
+        if (attempt > 0 || !(error instanceof ApiError && error.code === 'conflict')) throw error;
+      }
+    }
+  }
+
   async openChat(id: string) {
     const [chat, messages] = await Promise.all([api.getChat(id), api.messages(id)]);
     this.chat = chat;
@@ -133,7 +224,9 @@ class ChatStore {
     if (!character) return;
     const card = $state.snapshot(character.card);
     const name = character.name;
-    const greetings = greetingSwipes(card, macros, { user: this.userName, char: name });
+    const greetings = greetingSwipes(card, macros, { user: this.userName, char: name }, (text) =>
+      this.applyRegex(text, RegexPlacement.AI_OUTPUT),
+    );
     const now = new Date().toISOString();
     const note = settings.get('note', noteDefaults);
     const created = await api.createChat({
@@ -201,19 +294,49 @@ class ChatStore {
   // ---------------------------------------------------------------------------------------------
   // Sending and generating
 
+  /** Files attached to the next message. */
+  attachments = $state<PendingAttachment[]>([]);
+
+  attach(files: Iterable<File>) {
+    for (const file of files) {
+      const kind = attachmentKind(file);
+      if (kind === 'file' && !isTextFile(file)) {
+        ui.toast(t('chat.attachUnsupported', { name: file.name }), 'error');
+        continue;
+      }
+      this.attachments.push({
+        id: randomId(),
+        file,
+        kind,
+        preview: kind === 'image' ? URL.createObjectURL(file) : undefined,
+      });
+    }
+  }
+
+  detach(id: string) {
+    const item = this.attachments.find((a) => a.id === id);
+    if (item?.preview) URL.revokeObjectURL(item.preview);
+    this.attachments = this.attachments.filter((a) => a.id !== id);
+  }
+
   async send(text: string) {
     if (this.generation || !this.chat) return;
-    if (text.trim()) {
+    const pending = $state.snapshot(this.attachments) as PendingAttachment[];
+    if (text.trim() || pending.length) {
+      const content = this.applyRegex(text, RegexPlacement.USER_INPUT);
+      const extra = pending.length ? await uploadAttachments(pending) : {};
       const [message] = await api.addMessages(this.chat.id, [
         {
           role: 'user',
           name: this.userName,
-          swipes: [{ content: text, info: {} }],
+          swipes: [{ content, info: {} }],
           sendDate: new Date().toISOString(),
+          extra,
         },
       ]);
       this.messages.push(message!);
       this.draft = '';
+      for (const item of pending) this.detach(item.id);
     }
     await this.generate('normal');
   }
@@ -228,7 +351,7 @@ class ChatStore {
     await this.generate('regenerate');
   }
 
-  async generate(type: GenerationType) {
+  async generate(type: GenerationType, toolDepth = 0) {
     const chat = this.chat;
     const character = this.character;
     if (this.generation || !chat || !character) return;
@@ -248,7 +371,17 @@ class ChatStore {
     // The job id is ours from the start, so Stop works even before the provider answers.
     const jobId = randomId();
     const controller = new AbortController();
-    this.generation = { type, target, jobId, text: '', reasoning: '', startedAt: Date.now(), controller };
+    const generation: Generation = {
+      type,
+      target,
+      jobId,
+      text: '',
+      reasoning: '',
+      startedAt: Date.now(),
+      controller,
+      toolDepth,
+    };
+    this.generation = generation;
     const metadata = $state.snapshot(chat.metadata) as Record<string, unknown>;
     try {
       const prepared = await prepare(
@@ -259,21 +392,37 @@ class ChatStore {
           chat,
           metadata,
           messages: $state.snapshot(this.messages) as Message[],
+          regexScripts: $state.snapshot(this.regexScripts),
+          tools: connection.api === 'chat' ? await offeredTools() : undefined,
+          toolDepth,
         },
         connection,
       );
-      if (prepared.prompt.error === 'budget') throw new Error(t('chat.budgetExceeded'));
+      this.generation.toolsOffered = prepared.api === 'chat' && Boolean(prepared.request.tools?.length);
+      if (prepared.api === 'chat' && prepared.prompt.error === 'budget')
+        throw new Error(t('chat.budgetExceeded'));
       const meta: JobMeta = {
         type,
         target,
-        providerId: connection.provider.id,
-        model: connection.model,
-        stream: prepared.request.stream,
+        api: connection.api,
+        providerId: connection.api === 'text' ? connection.type.id : connection.provider.id,
+        model: prepared.model,
+        stream: prepared.stream,
+        stoppingStrings: prepared.stoppingStrings,
         charName: character.name,
         personaName: this.userName,
         startedAt: new Date().toISOString(),
         continuedText: type === 'continue' && last ? activeText(last) : undefined,
       };
+      // What was sent, for the prompt viewer (counted in the background).
+      void itemizeGeneration(prepared)
+        ?.then((data) =>
+          api.putPrompt(chat.id, {
+            startedAt: meta.startedAt,
+            data: data as unknown as Record<string, unknown>,
+          }),
+        )
+        .catch(() => {});
       const started = await api.startJob(
         {
           ...prepared.http,
@@ -288,7 +437,7 @@ class ChatStore {
         jobId,
         started.response,
         meta,
-        connection.provider,
+        responseAdapter(meta)!,
         prepared.stoppingStrings,
         metadata,
       );
@@ -296,9 +445,14 @@ class ChatStore {
       if (!controller.signal.aborted)
         ui.toast(t('chat.generationFailed', { message: errorText(error) }), 'error');
     } finally {
+      // (Read through the state: its proxy keeps its own copy of the fields.)
+      generation.continueWithTools = this.generation?.continueWithTools;
       this.generation = null;
       this.#afterGeneration();
     }
+    // The model called tools: answer with their results (SillyTavern generates again).
+    if (generation.continueWithTools && !controller.signal.aborted)
+      await this.generate('normal', toolDepth + 1);
   }
 
   /**
@@ -310,7 +464,7 @@ class ChatStore {
     jobId: string,
     response: Response,
     meta: JobMeta,
-    provider: ProviderDefinition,
+    adapter: Pick<ProviderAdapter, 'createDecoder' | 'parseResponse'>,
     stoppingStrings: readonly string[],
     metadata?: Record<string, unknown>,
   ): Promise<boolean> {
@@ -328,7 +482,7 @@ class ChatStore {
     try {
       output = await readResponse(
         response,
-        provider,
+        adapter,
         meta.stream,
         (o) => {
           partial = o;
@@ -415,16 +569,25 @@ class ChatStore {
   ) {
     const chat = this.chat;
     if (!chat) return;
-    const { text, reasoning } = finalizeOutput(output, meta, stoppingStrings);
+    const { text, reasoning } = finalizeOutput(output, meta, stoppingStrings, (raw, placement) =>
+      this.applyRegex(raw, placement),
+    );
     const target = meta.target;
+    // Tool calls are run only by the tab that asked for them.
+    const toolCalls = this.generation?.toolsOffered && output.toolCalls?.length ? output.toolCalls : null;
+    const emptyToolReply =
+      Boolean(toolCalls) && target.kind !== 'swipe' && ['', '...'].includes(text) && !reasoning;
     if (target.kind === 'impersonate') {
       this.draft = text;
     } else if (target.kind === 'new') {
-      if (!text && !reasoning) {
+      if (emptyToolReply) {
+        // Nothing but tool calls: no reply message.
+      } else if (!text && !reasoning) {
         ui.toast(t('chat.emptyReply'));
       } else {
         const [message] = await api.addMessages(chat.id, [newAssistantMessage(meta, text, reasoning)]);
         this.messages.push(message!);
+        if (this.generation) this.generation.stored = true;
       }
     } else {
       const index = this.messages.findIndex((m) => m.id === target.messageId);
@@ -456,10 +619,49 @@ class ChatStore {
         message.rev,
       );
       this.messages[index] = updated;
+      if (this.generation) this.generation.stored = true;
     }
     if (metadata && JSON.stringify(metadata) !== JSON.stringify($state.snapshot(chat.metadata))) {
       await this.updateMetadata(metadata).catch(() => {});
     }
+    if (toolCalls) await this.#runTools(meta, toolCalls, reasoning, emptyToolReply);
+  }
+
+  /**
+   * Runs the tools a reply called and records the calls in the chat (SillyTavern's hidden "Tool
+   * calls" message); the generation then continues with their results.
+   */
+  async #runTools(meta: JobMeta, calls: readonly ModelToolCall[], reasoning: string, emptyReply: boolean) {
+    const chat = this.chat;
+    const generation = this.generation;
+    if (!chat || !generation) return;
+    const result = await runToolCalls(calls, reasoning, (note) => ui.toast(note));
+    if (result.errors.length) {
+      ui.toast(
+        t('chat.toolErrors', { list: result.errors.map((e) => `${e.cause}: ${e.message}`).join('; ') }),
+        'error',
+      );
+    }
+    if ((!result.invocations.length && emptyReply) || result.stealthCalls.length) return;
+    if (result.invocations.length) {
+      const [message] = await api.addMessages(chat.id, [
+        {
+          role: 'assistant',
+          name: 'System',
+          hidden: true,
+          swipes: [{ content: toolInvocationsText(result.invocations), info: {} }],
+          sendDate: new Date().toISOString(),
+          extra: {
+            isSmallSys: true,
+            tool_invocations: result.invocations,
+            api: meta.providerId,
+            model: meta.model,
+          },
+        },
+      ]);
+      this.messages.push(message!);
+    }
+    generation.continueWithTools = true;
   }
 
   async swipe(messageId: string, direction: -1 | 1) {
@@ -490,8 +692,27 @@ class ChatStore {
     const message = this.messages[index];
     if (!message) return;
     const swipes = $state.snapshot(message.swipes);
-    swipes[message.swipeId]!.content = text;
+    const narrator = (message.extra as { type?: string }).type === 'narrator';
+    const placement =
+      message.role === 'user'
+        ? RegexPlacement.USER_INPUT
+        : narrator
+          ? RegexPlacement.SLASH_COMMAND
+          : RegexPlacement.AI_OUTPUT;
+    swipes[message.swipeId]!.content = this.applyRegex(text, placement, {
+      characterOverride: narrator ? undefined : message.name,
+      isEdit: true,
+    });
     this.messages[index] = await api.updateMessage(message.id, { swipes }, message.rev);
+  }
+
+  /** Shows another image of a message's gallery (SillyTavern `extra.media_index`). */
+  async setMediaIndex(messageId: string, index: number) {
+    const i = this.messages.findIndex((m) => m.id === messageId);
+    const message = this.messages[i];
+    if (!message) return;
+    const extra = { ...($state.snapshot(message.extra) as Record<string, unknown>), media_index: index };
+    this.messages[i] = await api.updateMessage(message.id, { extra }, message.rev);
   }
 
   async toggleHidden(messageId: string) {
@@ -507,12 +728,48 @@ class ChatStore {
     this.messages = this.messages.filter((m) => m.id !== messageId).map((m, seq) => ({ ...m, seq }));
   }
 
+  /** Copies the chat up to a message into a new chat and opens it (SillyTavern's branches). */
   async branch(index: number) {
     if (!this.chat) return;
-    const chat = await api.branchChat(this.chat.id, index);
+    const { chat, message } = await api.branchChat(this.chat.id, {
+      upTo: index,
+      title: branchChatTitle(this.chat.title, 'branch', (title) => this.chats.some((c) => c.title === title)),
+    });
+    this.#replaceMessage(message);
     this.chats.unshift(chat);
     await this.openChat(chat.id);
     ui.toast(t('chat.branched'));
+  }
+
+  /** The name SillyTavern suggests for a new checkpoint of this chat. */
+  checkpointTitle(): string {
+    return branchChatTitle(this.chat?.title ?? '', 'checkpoint', (title) =>
+      this.chats.some((c) => c.title === title),
+    );
+  }
+
+  /**
+   * Saves the chat up to a message as a checkpoint: a copy the message links to (its flag), while
+   * this chat stays open.
+   */
+  async checkpoint(index: number, title: string) {
+    if (!this.chat) return;
+    const { chat, message } = await api.branchChat(this.chat.id, { upTo: index, checkpoint: true, title });
+    this.#replaceMessage(message);
+    this.chats.unshift(chat);
+    ui.toast(t('chat.checkpointCreated', { name: chat.title }), 'success');
+  }
+
+  /** Opens a chat of this character by its name (checkpoint links, the main chat). */
+  async openChatByTitle(title: string) {
+    const target = this.chats.find((c) => c.title === title);
+    if (!target) throw new Error(t('chat.chatMissing', { name: title }));
+    await this.openChat(target.id);
+  }
+
+  #replaceMessage(message: Message) {
+    const index = this.messages.findIndex((m) => m.id === message.id);
+    if (index >= 0) this.messages[index] = message;
   }
 
   // ---------------------------------------------------------------------------------------------
@@ -554,8 +811,10 @@ class ChatStore {
     for (const job of jobs) {
       if (this.chat?.id !== chat.id || this.generation) return;
       const meta = job.meta as unknown as Partial<JobMeta>;
-      const provider = meta.providerId ? getProvider(meta.providerId) : undefined;
-      if (!provider || !meta.target || job.status === 'aborted') {
+      const adapter = meta.providerId
+        ? responseAdapter({ api: meta.api, providerId: meta.providerId })
+        : undefined;
+      if (!adapter || !meta.target || job.status === 'aborted') {
         await api.ackJob(job.id).catch(() => {});
         continue;
       }
@@ -583,10 +842,14 @@ class ChatStore {
       };
       try {
         const response = await api.resumeJob(job.id, 0, controller.signal);
-        const stops = settings
-          .get('chat', chatDefaults)
-          .stoppingStrings.map((s) => macros.evaluate(s, { user: full.personaName, char: full.charName }));
-        const stored = await this.#follow(job.id, response, full, provider, stops);
+        // Replies are cleaned up with the current formatting templates.
+        await activeFormatting().catch(() => {});
+        const stops =
+          full.stoppingStrings ??
+          settings
+            .get('chat', chatDefaults)
+            .stoppingStrings.map((s) => macros.evaluate(s, { user: full.personaName, char: full.charName }));
+        const stored = await this.#follow(job.id, response, full, adapter, stops);
         if (stored && job.status === 'completed') ui.toast(t('chat.recovered'), 'success');
       } catch (error) {
         if (!controller.signal.aborted)

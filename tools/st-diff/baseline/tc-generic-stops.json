@@ -1,0 +1,18 @@
+{
+  "scenario": "tc-generic-stops",
+  "image": "ghcr.io/sillytavern/sillytavern:1.19.0",
+  "recordedAt": "2026-10-15T16:24:01.713Z",
+  "request": {
+    "path": "/v1/completions",
+    "body": {
+      "prompt": "Write Aiko's next reply in a fictional chat between Aiko and User.\nAiko is a cheerful barista at the Moonlit Café. She remembers every regular by name.\ncheerful, curious, a little nosy\nUser walks into the café on a rainy evening.\n***\nUser: Hi!\nAiko: Oh, hello there! The usual?\n***\nUser: What do you recommend?\nAiko: *She taps the menu.* Matcha latte, always.\n***\nAiko: *Aiko looks up from the counter.* Welcome in, User! Rough weather out there?\nUser: Hi Aiko. It is pouring outside.\nAiko: *She slides a towel across the counter.* Dry off first. Tea or coffee?\nUser: Coffee, please. Black.\nAiko:",
+      "model": "mock-model",
+      "max_tokens": 300,
+      "temperature": 0.7,
+      "top_p": 0.5,
+      "frequency_penalty": 0,
+      "presence_penalty": 0,
+      "stop": ["\n", "\nUser:", "###", "END"]
+    }
+  }
+}

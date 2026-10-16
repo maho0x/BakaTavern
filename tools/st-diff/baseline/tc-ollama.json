@@ -1,0 +1,35 @@
+{
+  "scenario": "tc-ollama",
+  "image": "ghcr.io/sillytavern/sillytavern:1.19.0",
+  "recordedAt": "2026-10-15T16:23:48.087Z",
+  "request": {
+    "path": "/api/generate",
+    "body": {
+      "model": "llama3.1:8b",
+      "prompt": "<|start_header_id|>system<|end_header_id|>\n\nWrite Aiko's next reply in a fictional chat between Aiko and User.\nAiko is a cheerful barista at the Moonlit Café. She remembers every regular by name.\ncheerful, curious, a little nosy\nUser walks into the café on a rainy evening.<|eot_id|>***\n<|start_header_id|>user<|end_header_id|>\n\nUser: Hi!<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\nOh, hello there! The usual?<|eot_id|>***\n<|start_header_id|>user<|end_header_id|>\n\nUser: What do you recommend?<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n*She taps the menu.* Matcha latte, always.<|eot_id|>***\n<|start_header_id|>assistant<|end_header_id|>\n\n*Aiko looks up from the counter.* Welcome in, User! Rough weather out there?<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nHi Aiko. It is pouring outside.<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n*She slides a towel across the counter.* Dry off first. Tea or coffee?<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nCoffee, please. Black.<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
+      "stream": false,
+      "keep_alive": -1,
+      "raw": true,
+      "options": {
+        "temperature": 0.7,
+        "top_p": 0.5,
+        "typical_p": 1,
+        "min_p": 0,
+        "frequency_penalty": 0,
+        "presence_penalty": 0,
+        "top_k": 40,
+        "stop": [
+          "\nUser:",
+          "<|eot_id|>",
+          "<|start_header_id|>user<|end_header_id|>",
+          "<|start_header_id|>assistant<|end_header_id|>",
+          "<|start_header_id|>system<|end_header_id|>"
+        ],
+        "repeat_penalty": 1.2,
+        "repeat_last_n": 0,
+        "num_predict": 300,
+        "num_ctx": 8192
+      }
+    }
+  }
+}

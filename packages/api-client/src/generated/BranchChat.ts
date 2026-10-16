@@ -4,4 +4,18 @@ export type BranchChat = {
 /**
  * Index of the last message to copy.
  */
-upTo: number, title?: string, };
+upTo: number, 
+/**
+ * Name of the new chat; SillyTavern's `<chat> - Branch #n` / `<chat> - Checkpoint #n` when
+ * missing. A name another chat of the character has is refused (409 `exists`).
+ */
+title?: string, 
+/**
+ * The swipe the copied last message shows.
+ */
+swipeId?: number, 
+/**
+ * A checkpoint: the message links to the new chat (`extra.bookmark_link`); a branch is
+ * listed in the message's `extra.branches` instead.
+ */
+checkpoint?: boolean, };

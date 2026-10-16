@@ -1,10 +1,70 @@
-import { convertCharacterBook, newCard, type CharacterBook } from '@bakatavern/core';
+import {
+  convertCharacterBook,
+  importFromUrl,
+  newCard,
+  type CharacterBook,
+  type ImportFetch,
+} from '@bakatavern/core';
 
 import { api } from '../../api.ts';
 import { t } from '../../i18n/index.svelte.ts';
 import { chat } from '../../state/chat.svelte.ts';
 import { library } from '../../state/library.svelte.ts';
 import { errorText, ui } from '../../state/ui.svelte.ts';
+
+/** Requests through the server (its outgoing proxy), so other sites' rules for browsers do not apply. */
+const fetchThroughServer: ImportFetch = async (url, init) => {
+  const response = await api.proxy({
+    url,
+    method: init?.method ?? 'GET',
+    headers: init?.headers,
+    body: init?.body,
+  });
+  return {
+    ok: response.ok,
+    status: response.status,
+    contentType: (response.headers.get('content-type') ?? '').split(';')[0]!.trim(),
+    bytes: new Uint8Array(await response.arrayBuffer()),
+  };
+};
+
+/**
+ * Imports characters and lorebooks from site addresses or ids (Chub, JanitorAI, RisuRealm, ...),
+ * one per line. Returns the lines that failed.
+ */
+export async function importFromUrls(lines: readonly string[]): Promise<string[]> {
+  const failed: string[] = [];
+  for (const line of lines) {
+    try {
+      const result = await importFromUrl(line, fetchThroughServer);
+      if (result.kind === 'lorebook') {
+        const created = await api.importLorebook(
+          new File([result.file.bytes as BlobPart], result.file.name, { type: 'application/json' }),
+          result.file.name.replace(/\.json$/i, ''),
+        );
+        await library.refreshLorebooks();
+        ui.toast(t('library.urlBookImported', { name: created.name }), 'success');
+      } else if ('file' in result) {
+        await importCharacterFiles([
+          new File([result.file.bytes as BlobPart], result.file.name, { type: result.file.type }),
+        ]);
+      } else {
+        const avatar = result.avatar
+          ? await api.uploadFile(new Blob([result.avatar.bytes as BlobPart], { type: result.avatar.type }))
+          : null;
+        const created = await api.createCharacter(result.card, avatar?.hash);
+        library.upsertCharacter(created);
+        await offerEmbeddedBook(created.id, created.name, created.card as { data?: Record<string, unknown> });
+        ui.toast(t('library.imported', { count: 1 }), 'success');
+        await chat.openCharacter(created.id);
+      }
+    } catch (error) {
+      failed.push(line);
+      ui.toast(t('library.urlFailed', { url: line, message: errorText(error) }), 'error');
+    }
+  }
+  return failed;
+}
 
 /** Imports character cards (PNG, JSON, CHARX) and opens the first one. */
 export async function importCharacterFiles(files: FileList | File[] | null | undefined) {

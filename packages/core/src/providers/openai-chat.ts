@@ -1,6 +1,6 @@
-import type { ChatMessage } from '../prompt/types.ts';
-import { SseParser } from './sse.ts';
 import { joinUrl } from './registry.ts';
+import { SseParser } from './sse.ts';
+import { chatGenerateData, chatUpstream, defaultChatSourceSettings, type ChatSettings } from './st-chat.ts';
 import {
   errorMessage,
   type GenerationRequest,
@@ -10,69 +10,58 @@ import {
   type StreamDelta,
 } from './types.ts';
 
-/** Strips fields only BakaTavern uses internally. */
-function wireMessage(m: ChatMessage): Record<string, unknown> {
-  const out: Record<string, unknown> = { role: m.role, content: m.content };
-  if (m.name) out.name = m.name;
-  if (m.tool_calls) out.tool_calls = m.tool_calls.map(({ signature: _s, ...rest }) => rest);
-  if (m.tool_call_id) out.tool_call_id = m.tool_call_id;
-  return out;
+/** SillyTavern-keyed settings for a request built from plain parameters (e.g. a connection test). */
+export function settingsFromParams(request: GenerationRequest): ChatSettings {
+  const p = request.params;
+  return {
+    temp_openai: p.temperature ?? 1,
+    freq_pen_openai: p.frequency_penalty ?? 0,
+    pres_pen_openai: p.presence_penalty ?? 0,
+    top_p_openai: p.top_p ?? 1,
+    top_k_openai: p.top_k ?? 0,
+    min_p_openai: p.min_p ?? 0,
+    top_a_openai: p.top_a ?? 0,
+    repetition_penalty_openai: p.repetition_penalty ?? 1,
+    openai_max_tokens: p.max_tokens,
+    stream_openai: request.stream,
+    seed: p.seed ?? -1,
+    n: p.n ?? 1,
+    reasoning_effort: p.reasoning_effort ?? 'auto',
+    verbosity: p.verbosity ?? 'auto',
+    show_thoughts: p.include_reasoning ?? true,
+    custom_prompt_post_processing: '',
+  };
 }
 
-export function buildOpenAIBody(request: GenerationRequest): Record<string, unknown> {
-  const { provider, params } = request;
-  const s = provider.samplers ?? {};
-  const body: Record<string, unknown> = {
+/** The upstream request SillyTavern would send for this generation (OpenAI-style sources). */
+export function buildOpenAIRequest(request: GenerationRequest): {
+  url: string;
+  body: Record<string, unknown>;
+  headers: Record<string, string>;
+} {
+  const { provider } = request;
+  const data = chatGenerateData({
+    source: provider.id,
     model: request.model,
-    messages: request.messages.map(wireMessage),
-    stream: request.stream,
-  };
-  if (params.temperature !== undefined) body.temperature = params.temperature;
-  if (params.top_p !== undefined) body.top_p = params.top_p;
-  // SillyTavern sends both penalties whenever the source accepts them, zero included.
-  if (s.penalties) {
-    if (params.frequency_penalty !== undefined) body.frequency_penalty = params.frequency_penalty;
-    if (params.presence_penalty !== undefined) body.presence_penalty = params.presence_penalty;
-  }
-  if (s.topK && params.top_k) body.top_k = params.top_k;
-  if (s.minP && params.min_p) body.min_p = params.min_p;
-  if (s.topA && params.top_a) body.top_a = params.top_a;
-  if (s.repetitionPenalty && params.repetition_penalty && params.repetition_penalty !== 1) {
-    body.repetition_penalty = params.repetition_penalty;
-  }
-  if (s.seed && params.seed !== undefined && params.seed >= 0) body.seed = params.seed;
-  if (s.n && params.n && params.n > 1) body.n = params.n;
-  if (s.logitBias && params.logit_bias && Object.keys(params.logit_bias).length)
-    body.logit_bias = params.logit_bias;
-  if (params.stop?.length) body.stop = params.stop.slice(0, 4);
+    type: request.type ?? 'normal',
+    messages: request.messages,
+    settings: { ...defaultChatSourceSettings, ...(request.settings ?? settingsFromParams(request)) },
+    stop: request.params.stop ?? [],
+    names: request.names,
+    logitBias: request.params.logit_bias,
+    tools: request.tools,
+  });
+  return chatUpstream(data, {
+    baseUrl: request.baseUrl || provider.baseUrl,
+    includeBody: request.extraBody,
+    excludeBody: request.excludeBody,
+    includeHeaders: request.extraHeaders,
+  });
+}
 
-  const usesCompletionTokens = provider.maxCompletionTokensModels?.test(request.model) ?? false;
-  body[usesCompletionTokens ? 'max_completion_tokens' : 'max_tokens'] = params.max_tokens;
-
-  const effort = params.reasoning_effort;
-  if (provider.reasoning === 'openai' && effort && effort !== 'auto') {
-    body.reasoning_effort = effort === 'min' ? 'minimal' : effort === 'max' ? 'high' : effort;
-  }
-  if (provider.reasoning === 'openrouter') {
-    const reasoning: Record<string, unknown> = {};
-    if (effort && effort !== 'auto')
-      reasoning.effort = effort === 'min' ? 'minimal' : effort === 'max' ? 'high' : effort;
-    if (params.include_reasoning === false) reasoning.exclude = true;
-    if (Object.keys(reasoning).length) body.reasoning = reasoning;
-    if (params.include_reasoning) body.include_reasoning = true;
-  }
-  if (params.verbosity && params.verbosity !== 'auto' && provider.id === 'openai')
-    body.verbosity = params.verbosity;
-  if (usesCompletionTokens && provider.id === 'openai') {
-    // Reasoning models reject sampling parameters.
-    for (const key of ['temperature', 'top_p', 'frequency_penalty', 'presence_penalty', 'logit_bias', 'stop'])
-      delete body[key];
-  }
-  if (request.stream && provider.id === 'openai') body.stream_options = { include_usage: true };
-
-  Object.assign(body, request.extraBody ?? {});
-  for (const key of request.excludeBody ?? []) delete body[key];
-  return body;
+/** The request body alone (tests and tools). */
+export function buildOpenAIBody(request: GenerationRequest): Record<string, unknown> {
+  return buildOpenAIRequest(request).body;
 }
 
 class OpenAIDecoder implements StreamDecoder {
@@ -100,6 +89,7 @@ class OpenAIDecoder implements StreamDecoder {
       return [];
     }
     if (json.error) return [{ error: errorMessage(json) }];
+    const event: StreamDelta = { event: json };
     const choice = (json.choices as Record<string, unknown>[] | undefined)?.[0];
     const delta = (choice?.delta ?? choice?.message ?? {}) as Record<string, unknown>;
     const out: StreamDelta = {};
@@ -109,22 +99,22 @@ class OpenAIDecoder implements StreamDecoder {
     if (typeof reasoning === 'string' && reasoning) out.reasoning = reasoning;
     if (typeof choice?.finish_reason === 'string') out.finishReason = choice.finish_reason;
     if (json.usage && typeof json.usage === 'object') out.usage = json.usage as Record<string, unknown>;
-    return Object.keys(out).length ? [out] : [];
+    return Object.keys(out).length ? [event, out] : [event];
   }
 }
 
 export const openAIChat: ProviderAdapter = {
   buildRequest(request): HttpRequestSpec {
-    const base = request.baseUrl || request.provider.baseUrl;
+    const upstream = buildOpenAIRequest(request);
     return {
-      url: joinUrl(base, 'chat/completions'),
+      url: upstream.url,
       method: 'POST',
       headers: {
         'content-type': 'application/json',
         ...request.provider.defaultHeaders,
-        ...request.extraHeaders,
+        ...upstream.headers,
       },
-      body: JSON.stringify(buildOpenAIBody(request)),
+      body: JSON.stringify(upstream.body),
       auth: request.provider.auth,
     };
   },
@@ -150,3 +140,5 @@ export const openAIChat: ProviderAdapter = {
 export function openAIDecoderFor(reasoningField?: string): StreamDecoder {
   return new OpenAIDecoder(reasoningField);
 }
+
+export { joinUrl };
