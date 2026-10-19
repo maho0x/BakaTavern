@@ -9,6 +9,7 @@
   import { invalidateBook } from '../../generation/books.ts';
   import { t } from '../../i18n/index.svelte.ts';
   import { library } from '../../state/library.svelte.ts';
+  import { DebouncedSave } from '../../state/pending-saves.ts';
   import { errorText, ui } from '../../state/ui.svelte.ts';
   import EntryEditor from './EntryEditor.svelte';
   import {
@@ -31,7 +32,7 @@
   const checked = new SvelteSet<number>();
   // Pending saves per entry: bookkeeping, not something the page shows.
   // eslint-disable-next-line svelte/prefer-svelte-reactivity
-  const timers = new Map<number, ReturnType<typeof setTimeout>>();
+  const savers = new Map<number, DebouncedSave>();
   let refreshTimer: ReturnType<typeof setTimeout> | undefined;
 
   const selected = $derived(entries.find((e) => e.uid === selectedUid) ?? null);
@@ -115,15 +116,12 @@
   }
 
   function changed(uid: number) {
-    clearTimeout(timers.get(uid));
-    timers.set(
-      uid,
-      setTimeout(() => void saveEntry(uid), 400),
-    );
+    let saver = savers.get(uid);
+    if (!saver) savers.set(uid, (saver = new DebouncedSave(() => saveEntry(uid), 400)));
+    saver.schedule();
   }
 
   async function saveEntry(uid: number) {
-    timers.delete(uid);
     const entry = entries.find((e) => e.uid === uid);
     if (!book || !entry) return;
     try {
@@ -135,11 +133,7 @@
   }
 
   async function flushAll() {
-    const pending = [...timers.entries()];
-    for (const [uid, timer] of pending) {
-      clearTimeout(timer);
-      await saveEntry(uid);
-    }
+    for (const saver of [...savers.values()]) await saver.flush();
   }
 
   async function insert(fields: Partial<WorldInfoEntry>) {
@@ -175,8 +169,8 @@
   async function deleteEntry(entry: WorldInfoEntry) {
     if (!book || !confirm(t('wi.deleteEntryConfirm', { name: entryTitle(entry) }))) return;
     try {
-      clearTimeout(timers.get(entry.uid));
-      timers.delete(entry.uid);
+      savers.get(entry.uid)?.cancel();
+      savers.delete(entry.uid);
       await api.deleteLorebookEntry(book.id, entry.uid);
       entries = entries.filter((e) => e.uid !== entry.uid);
       checked.delete(entry.uid);
@@ -289,8 +283,8 @@
   async function deleteBook() {
     if (!book || !confirm(t('wi.deleteConfirm', { name: book.name }))) return;
     await run(async () => {
-      for (const timer of timers.values()) clearTimeout(timer);
-      timers.clear();
+      for (const saver of savers.values()) saver.cancel();
+      savers.clear();
       await api.deleteLorebook(book!.id);
       invalidateBook(book!.id);
       await library.refreshLorebooks();

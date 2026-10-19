@@ -9,8 +9,10 @@ import {
   mockReply,
   mockRequests,
   mockUrl,
+  openPanel,
   send,
   uniqueName,
+  useMockConnection,
 } from './helpers.ts';
 
 test('sets up a provider, key and model in the connection panel', async ({ page, request }, testInfo) => {
@@ -49,4 +51,28 @@ test('sets up a provider, key and model in the connection panel', async ({ page,
   if (isMobile(page)) await expect(page.getByRole('button', { name: 'Send' })).toBeVisible();
   await send(page, 'Ping');
   await expect(messages(page).nth(2)).toContainText('Pong.');
+});
+
+test('a test message answered after the panel closed', async ({ page, request }, testInfo) => {
+  const warnings: string[] = [];
+  page.on('console', (message) => {
+    if (message.type() === 'warning' && message.text().includes('svelte')) warnings.push(message.text());
+  });
+  await useMockConnection(request);
+  await mockReply(request, { reply: 'Late pong.' });
+
+  await page.goto('/');
+  await importCards(page, [{ name: 'ren', card: { v3: v3Card(uniqueName('Ren', testInfo)) } }]);
+  // A slow provider: the answer arrives after the panel is gone.
+  await page.route('**/api/proxy', async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    await route.continue();
+  });
+  await openPanel(page, 'Connection');
+  await page.getByRole('button', { name: 'Send a test message' }).click();
+  await page.getByRole('button', { name: 'Close' }).click();
+  // The settings change meanwhile (here from another client).
+  await useMockConnection(request);
+  await expect(page.getByText('Connected. Reply: Late pong.')).toBeVisible();
+  expect(warnings).toEqual([]);
 });

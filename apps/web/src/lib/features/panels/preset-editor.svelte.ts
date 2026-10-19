@@ -4,6 +4,7 @@ import { api } from '../../api.ts';
 import { invalidatePreset } from '../../generation/pipeline.ts';
 import { t } from '../../i18n/index.svelte.ts';
 import { library } from '../../state/library.svelte.ts';
+import { DebouncedSave } from '../../state/pending-saves.ts';
 import { errorText, ui } from '../../state/ui.svelte.ts';
 
 /**
@@ -14,7 +15,7 @@ import { errorText, ui } from '../../state/ui.svelte.ts';
 export class PresetEditor<T extends object> {
   preset = $state<Preset | null>(null);
   draft = $state<T | null>(null);
-  #timer: ReturnType<typeof setTimeout> | undefined;
+  #saver = new DebouncedSave(() => this.save());
 
   readonly kind: string;
   readonly normalize: (data: Record<string, unknown>) => T;
@@ -49,19 +50,14 @@ export class PresetEditor<T extends object> {
   }
 
   changed() {
-    clearTimeout(this.#timer);
-    this.#timer = setTimeout(() => void this.save(), 500);
+    this.#saver.schedule();
   }
 
-  async flush() {
-    if (!this.#timer) return;
-    clearTimeout(this.#timer);
-    this.#timer = undefined;
-    await this.save();
+  flush() {
+    return this.#saver.flush();
   }
 
   async save() {
-    this.#timer = undefined;
     const preset = this.preset;
     if (!preset || !this.draft) return;
     try {

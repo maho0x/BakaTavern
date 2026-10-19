@@ -40,6 +40,7 @@ import {
 } from '../generation/pipeline.ts';
 import { t } from '../i18n/index.svelte.ts';
 import { library } from './library.svelte.ts';
+import { flushPendingSaves } from './pending-saves.ts';
 import { chatDefaults, noteDefaults, personaDefaults } from './prefs.ts';
 import { regex } from './regex.svelte.ts';
 import { settings } from './settings.svelte.ts';
@@ -384,6 +385,8 @@ class ChatStore {
     this.generation = generation;
     const metadata = $state.snapshot(chat.metadata) as Record<string, unknown>;
     try {
+      // Edits saved after a short delay (presets, personas, entries) count from the moment they are made.
+      await flushPendingSaves();
       const prepared = await prepare(
         {
           type,

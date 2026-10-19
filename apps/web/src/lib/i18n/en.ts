@@ -6,6 +6,7 @@ const en = {
   'common.cancel': 'Cancel',
   'common.close': 'Close',
   'common.delete': 'Delete',
+  'common.dismiss': 'Dismiss',
   'common.export': 'Export',
   'common.loading': 'Loading…',
   'common.moveDown': 'Move down',

@@ -7,6 +7,7 @@
   import { t } from '../../i18n/index.svelte.ts';
   import { chat } from '../../state/chat.svelte.ts';
   import { library } from '../../state/library.svelte.ts';
+  import { DebouncedSave } from '../../state/pending-saves.ts';
   import { personaDefaults } from '../../state/prefs.ts';
   import { settings } from '../../state/settings.svelte.ts';
   import { errorText, ui } from '../../state/ui.svelte.ts';
@@ -15,7 +16,7 @@
   let form = $state<PersonaInput | null>(null);
   let rev = 0;
   let avatarInput = $state<HTMLInputElement>();
-  let saveTimer: ReturnType<typeof setTimeout> | undefined;
+  const saver = new DebouncedSave(save);
 
   const prefs = $derived(settings.get('persona', personaDefaults));
   const selected = $derived(library.persona(selectedId) ?? chat.persona);
@@ -58,8 +59,7 @@
   }
 
   function changed() {
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => void save(), 500);
+    saver.schedule();
   }
 
   async function save() {

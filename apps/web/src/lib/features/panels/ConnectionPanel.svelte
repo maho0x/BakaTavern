@@ -61,14 +61,16 @@
     settings.update('connection', { customBody: { ...customBody, [key]: value } });
   }
 
+  // These finish after the panel may have closed: they read the panel's values before waiting.
   async function loadModels() {
-    const spec = modelsRequest(provider, effectiveBase);
+    const source = provider;
+    const spec = modelsRequest(source, effectiveBase);
     if (!spec) return;
     loadingModels = true;
     try {
-      models = parseModels(provider, await api.proxyJson({ ...spec, secretId: secretId || undefined }));
+      models = parseModels(source, await api.proxyJson({ ...spec, secretId: secretId || undefined }));
       const connection = activeConnection();
-      if (connection?.api === 'chat' && connection.provider.id === provider.id)
+      if (connection?.api === 'chat' && connection.provider.id === source.id)
         rememberModels(connection, models);
       ui.toast(t('conn.modelsLoaded', { count: models.length }));
     } catch (error) {
@@ -80,8 +82,9 @@
 
   async function test() {
     testing = true;
+    const adapter = adapterFor(provider);
     try {
-      const spec = adapterFor(provider).buildRequest({
+      const spec = adapter.buildRequest({
         provider,
         baseUrl: effectiveBase,
         model,
@@ -91,7 +94,7 @@
         names: { charName: '', userName: '', groupNames: [] },
       });
       const body = await api.proxyJson({ ...spec, secretId: secretId || undefined });
-      const reply = adapterFor(provider).parseResponse(body);
+      const reply = adapter.parseResponse(body);
       if (reply.error) throw new Error(reply.error);
       ui.toast(t('conn.testOk', { reply: (reply.text ?? '').slice(0, 80) }), 'success');
     } catch (error) {

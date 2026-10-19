@@ -21,6 +21,9 @@ test('checkpoints, branches and the prompt viewer', async ({ page, request }, te
   await page.getByRole('menuitem', { name: 'View the prompt' }).click();
   const viewer = page.getByRole('dialog', { name: 'Prompt' });
   await expect(viewer.getByRole('rowheader', { name: 'Chat history' })).toBeVisible();
+  // Dialogs sit in the middle of the window (phones give them the whole screen).
+  const box = (await viewer.boundingBox())!;
+  expect(Math.abs(box.x + box.width / 2 - page.viewportSize()!.width / 2)).toBeLessThan(2);
   await viewer.getByText('Show the prompt as sent').click();
   await expect(viewer.locator('pre')).toContainText('Remember this moment.');
   await viewer.getByRole('button', { name: 'Close' }).last().click();

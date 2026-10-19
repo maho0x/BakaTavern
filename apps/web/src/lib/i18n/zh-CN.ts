@@ -8,6 +8,7 @@ const zhCN: Record<keyof typeof en, string> = {
   'common.cancel': '取消',
   'common.close': '关闭',
   'common.delete': '删除',
+  'common.dismiss': '关闭提示',
   'common.export': '导出',
   'common.loading': '加载中…',
   'common.moveDown': '下移',

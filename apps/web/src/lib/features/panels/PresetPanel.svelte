@@ -20,6 +20,7 @@
   import { invalidatePreset } from '../../generation/pipeline.ts';
   import { t, type MessageKey } from '../../i18n/index.svelte.ts';
   import { library } from '../../state/library.svelte.ts';
+  import { DebouncedSave } from '../../state/pending-saves.ts';
   import { connectionDefaults, logitBiasDefaults } from '../../state/prefs.ts';
   import { settings } from '../../state/settings.svelte.ts';
   import { errorText, ui } from '../../state/ui.svelte.ts';
@@ -35,7 +36,7 @@
 
   let preset = $state<Preset | null>(null);
   let draft = $state<ChatCompletionPreset | null>(null);
-  let saveTimer: ReturnType<typeof setTimeout> | undefined;
+  const saver = new DebouncedSave(save);
   let fileInput = $state<HTMLInputElement>();
   let editing = $state<PromptDefinition | null>(null);
   let editingIsNew = $state(false);
@@ -66,8 +67,7 @@
   }
 
   function changed() {
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => void save(), 500);
+    saver.schedule();
   }
 
   async function save() {

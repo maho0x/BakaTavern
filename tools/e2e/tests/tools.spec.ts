@@ -37,6 +37,11 @@ test('the model calls a tool and answers with its result', async ({ page, reques
     });
   });
 
+  // A slow preset save: the reply sent right after the change must still use it.
+  await page.route('**/api/presets/*', async (route) => {
+    if (route.request().method() === 'PATCH') await new Promise((resolve) => setTimeout(resolve, 2000));
+    await route.continue();
+  });
   await openPanel(page, 'Connection');
   await page.getByRole('tab', { name: 'Preset' }).click();
   await page.getByRole('checkbox', { name: 'Let the model call tools (function calling)' }).check();
@@ -44,6 +49,7 @@ test('the model calls a tool and answers with its result', async ({ page, reques
 
   await clearMockRequests(request);
   await send(page, 'Roll a d6 for me.');
+  await page.unroute('**/api/presets/*');
   await expect(messages(page).nth(3)).toContainText('You rolled a 4.');
   // The calls are recorded in a hidden message between the request and the answer.
   await expect(messages(page).nth(2)).toContainText('Tool calls: Roll dice');

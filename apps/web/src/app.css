@@ -306,8 +306,9 @@
     width: 100%;
   }
 
-  /* Overlays */
+  /* Overlays. The reset's `margin: 0` beats the browser's `margin: auto` that centers modals. */
   dialog.sheet {
+    margin: auto;
     border: 1px solid var(--bt-line);
     border-radius: var(--bt-radius);
     padding: 0;

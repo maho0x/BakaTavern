@@ -55,14 +55,24 @@
     return { api: 'text', type, model, serverUrl, secretId: secretId || undefined, prefs };
   }
 
+  // These finish after the panel may have closed: they read the panel's values before waiting.
   async function loadModels() {
-    const spec = textgenModelsRequest(type.id, serverUrl);
+    const [backend, current] = [type, model];
+    const spec = textgenModelsRequest(backend.id, serverUrl);
     if (!spec) return;
     loadingModels = true;
     try {
-      models = parseTextgenModels(type.id, await api.proxyJson({ ...spec, secretId: secretId || undefined }));
+      models = parseTextgenModels(
+        backend.id,
+        await api.proxyJson({ ...spec, secretId: secretId || undefined }),
+      );
       ui.toast(t('conn.modelsLoaded', { count: models.length }));
-      if (!model && models[0] && type.modelSetting) patch('models', models[0]);
+      if (!current && models[0] && backend.modelSetting) {
+        const text = textPrefs(settings.get('connection', connectionDefaults));
+        settings.update('connection', {
+          text: { ...text, models: { ...text.models, [backend.id]: models[0] } },
+        });
+      }
     } catch (error) {
       ui.toast(errorText(error), 'error');
     } finally {
@@ -72,19 +82,20 @@
 
   async function test() {
     testing = true;
+    const [backend, maxContext, key] = [type, prefs.maxContext, secretId];
     try {
       const data = textgenGenerateData({
         settings: await activeTextSettings(connection()),
         prompt: 'Hello',
         maxTokens: 16,
-        maxContext: prefs.maxContext,
+        maxContext,
         type: 'quiet',
         stoppingStrings: [],
         substitute: (text) => macros.evaluate(text, { user: 'User', char: 'Assistant' }),
         stream: false,
       });
-      const body = await api.proxyJson({ ...textgenRequest(data), secretId: secretId || undefined });
-      const reply = textgenAdapter(type.id).parseResponse(body);
+      const body = await api.proxyJson({ ...textgenRequest(data), secretId: key || undefined });
+      const reply = textgenAdapter(backend.id).parseResponse(body);
       if (reply.error) throw new Error(reply.error);
       ui.toast(t('conn.testOk', { reply: (reply.text ?? '').slice(0, 80) }), 'success');
     } catch (error) {
