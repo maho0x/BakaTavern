@@ -11,4 +11,8 @@ characters: { [key in string]: string },
 /**
  * Persona id → avatar file in `User Avatars`.
  */
-personas: { [key in string]: string }, };
+personas: { [key in string]: string }, 
+/**
+ * Group id → SillyTavern group id (its file name in `groups`).
+ */
+groups: { [key in string]: string }, };

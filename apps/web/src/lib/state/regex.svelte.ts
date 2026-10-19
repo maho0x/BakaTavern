@@ -1,8 +1,10 @@
-import type { Character } from '@bakatavern/api-client';
+import { ApiError, type Character } from '@bakatavern/api-client';
 import { activeRegexScripts, type RegexScript } from '@bakatavern/core';
 
 import { api } from '../api.ts';
+import { invalidatePreset } from '../generation/pipeline.ts';
 import { t } from '../i18n/index.svelte.ts';
+import { chat } from './chat.svelte.ts';
 import { library } from './library.svelte.ts';
 import { connectionDefaults, regexDefaults, type RegexPrefs } from './prefs.ts';
 import { settings } from './settings.svelte.ts';
@@ -46,6 +48,45 @@ class RegexStore {
 
   setGlobal(scripts: RegexScript[]) {
     settings.update('regex', { scripts });
+  }
+
+  /** Replaces the open character's scripts; editing them allows them, as in SillyTavern. */
+  async setCharacterScripts(scripts: RegexScript[]) {
+    const id = chat.character?.id;
+    if (!id) return;
+    await chat.updateCard((card) => {
+      const data = (card.data ??= {});
+      data.extensions = {
+        ...(data.extensions as Record<string, unknown> | undefined),
+        regex_scripts: scripts,
+      };
+    });
+    this.setAllowed('allowedCharacters', id, true);
+  }
+
+  /** Replaces the active preset's scripts (retried once when the preset changed elsewhere). */
+  async setPresetScripts(scripts: RegexScript[]) {
+    const id = this.preset?.id;
+    if (!id) return;
+    const write = async () => {
+      const current = await api.getPreset(id);
+      const data = structuredClone(current.data);
+      data.extensions = {
+        ...(data.extensions as Record<string, unknown> | undefined),
+        regex_scripts: scripts,
+      };
+      await api.updatePreset(id, { data, rev: current.rev });
+    };
+    try {
+      await write();
+    } catch (error) {
+      if (!(error instanceof ApiError && error.code === 'conflict')) throw error;
+      await write();
+    }
+    invalidatePreset();
+    await library.refreshPresets();
+    await this.syncPreset();
+    this.setAllowed('allowedPresets', id, true);
   }
 
   setAllowed(kind: 'allowedCharacters' | 'allowedPresets', id: string, allowed: boolean) {

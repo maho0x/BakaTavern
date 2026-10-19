@@ -206,6 +206,8 @@ export interface InstructContext {
   userName: string;
   charName: string;
   isGroup: boolean;
+  /** Every group member's name (example lines of other members keep their speaker). */
+  groupNames?: readonly string[];
   /** Macro substitution; `names` overrides `{{user}}` and `{{char}}`. */
   substitute: (text: string, names?: { user: string; char: string }) => string;
 }
@@ -373,7 +375,7 @@ export function parseExampleIntoIndividual(
 export function formatInstructExamples(
   f: InstructContext,
   examples: readonly string[],
-  groupNames: readonly string[] = [],
+  groupNames: readonly string[] = f.groupNames ?? [],
 ): string[] {
   const { instruct, context } = f;
   const blockHeading = context.example_separator ? `${f.substitute(context.example_separator)}\n` : '';

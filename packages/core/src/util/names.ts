@@ -14,3 +14,12 @@ export function branchChatTitle(
   while (taken(`${clean} - ${token}${i}`)) i++;
   return `${clean} - ${token}${i}`;
 }
+
+/** `name`, else `name (1)`, `name (2)`, ... whichever is free first (SillyTavern `getUniqueName`). */
+export function uniqueName(base: string, taken: (name: string) => boolean): string {
+  for (let i = 0; i < 1000; i++) {
+    const name = i === 0 ? base : `${base} (${i})`;
+    if (!taken(name)) return name;
+  }
+  return base;
+}

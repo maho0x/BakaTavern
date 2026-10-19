@@ -13,7 +13,7 @@ test('imports a character card from a URL', async ({ page, request }, testInfo) 
   const address = mockUrl.replace('127.0.0.1', 'localhost') + path;
 
   await page.goto('/');
-  await page.getByRole('region', { name: 'Chat' }).waitFor();
+  await page.getByRole('region', { name: 'Chat', exact: true }).waitFor();
   const button = page.getByRole('button', { name: 'Import from a URL' }).first();
   // On phones the library may be behind its button.
   if (!(await button.isVisible())) await page.getByRole('button', { name: 'Characters' }).first().click();
@@ -23,7 +23,7 @@ test('imports a character card from a URL', async ({ page, request }, testInfo) 
   await dialog.getByRole('button', { name: 'Import' }).click();
 
   // The card arrives and opens; the address that cannot be imported stays in the box.
-  await expect(page.getByRole('region', { name: 'Chat' }).getByText(name).first()).toBeVisible();
+  await expect(page.getByRole('region', { name: 'Chat', exact: true }).getByText(name).first()).toBeVisible();
   await expect(page.getByText('Could not import https://example.com/nope.png')).toBeVisible();
   await expect(dialog.getByLabel('Addresses or ids, one per line')).toHaveValue(
     'https://example.com/nope.png',

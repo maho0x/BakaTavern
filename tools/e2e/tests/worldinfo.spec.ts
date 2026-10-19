@@ -82,7 +82,7 @@ test('imports a NovelAI lorebook', async ({ page }, testInfo) => {
   const file = `nai-${testInfo.project.name}-${testInfo.workerIndex}-${testInfo.retry}`;
   answerDialogs(page, () => '');
   await page.goto('/');
-  await page.getByRole('region', { name: 'Chat' }).waitFor();
+  await page.getByRole('region', { name: 'Chat', exact: true }).waitFor();
   await openPanel(page, 'World Info');
   const novel = {
     lorebookVersion: 5,

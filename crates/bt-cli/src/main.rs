@@ -71,8 +71,9 @@ fn read_password() -> anyhow::Result<String> {
 
 fn print_import_report(report: &bt_server::st_import::StImportReport) {
     eprintln!(
-        "Imported {} characters, {} chats, {} lorebooks, {} presets, {} personas, {} keys.",
+        "Imported {} characters, {} groups, {} chats, {} lorebooks, {} presets, {} personas, {} keys.",
         report.characters,
+        report.groups,
         report.chats,
         report.lorebooks,
         report.presets,

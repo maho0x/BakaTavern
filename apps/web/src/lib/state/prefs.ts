@@ -21,6 +21,9 @@ export interface UiPrefs {
   /** Allow images from other sites in messages. */
   externalMedia: boolean;
   customCss: string;
+  /** The imported (SillyTavern) theme in use, if any, and the colors it sets (CSS tokens). */
+  themeName: string | null;
+  themeColors: Record<string, string>;
 }
 
 export const uiDefaults: UiPrefs = {
@@ -33,6 +36,8 @@ export const uiDefaults: UiPrefs = {
   renderHtml: true,
   externalMedia: false,
   customCss: '',
+  themeName: null,
+  themeColors: {},
 };
 
 export interface ChatPrefs {
@@ -244,3 +249,67 @@ export interface LogitBiasPrefs {
 }
 
 export const logitBiasDefaults: LogitBiasPrefs = { lists: stDefaultBiasLists };
+
+/** Quick Replies: which sets show where (SillyTavern `extension_settings.quickReplyV2`). */
+export interface SetLink {
+  set: string;
+  isVisible: boolean;
+}
+
+export interface QuickReplyPrefs {
+  isEnabled: boolean;
+  /** All visible sets' buttons in one row. */
+  isCombined: boolean;
+  config: { setList: SetLink[] };
+  /** By character id. */
+  characterConfigs: Record<string, { setList: SetLink[] }>;
+}
+
+export const quickReplyDefaults: QuickReplyPrefs = {
+  isEnabled: true,
+  isCombined: false,
+  config: { setList: [] },
+  characterConfigs: {},
+};
+
+/** Front-end cards (TavernHelper / 酒馆助手): message pages and scripts. */
+export interface FrontendPrefs {
+  /** Show front-end code blocks in messages as pages. */
+  enabled: boolean;
+  /** Load the libraries cards expect (Vue, jQuery UI, Font Awesome) from a CDN. */
+  cdn: boolean;
+  /** Characters whose pages run unsandboxed, with this app's origin (trust mode). */
+  trustedCharacters: string[];
+  /** Characters and presets whose embedded scripts may run. */
+  allowedCharacters: string[];
+  allowedPresets: string[];
+  /** Scripts that run everywhere (TavernHelper's global scripts, its `ScriptTree` JSON). */
+  scripts: Record<string, unknown>[];
+  /** Run the global scripts. */
+  globalScripts: boolean;
+  /** Questions already asked (`character:<id>`, `preset:<id>`). */
+  asked: string[];
+}
+
+export const frontendDefaults: FrontendPrefs = {
+  enabled: true,
+  cdn: true,
+  trustedCharacters: [],
+  allowedCharacters: [],
+  allowedPresets: [],
+  scripts: [],
+  globalScripts: true,
+  asked: [],
+};
+
+/** Chat backgrounds (SillyTavern's `backgrounds/` folder and `background` setting). */
+export interface BackgroundPrefs {
+  /** Pictures by SillyTavern file name, with their stored file. */
+  items: { name: string; hash: string }[];
+  /** The one shown in every chat that has none of its own. */
+  current: string | null;
+  /** SillyTavern `background.fitting`. */
+  fit: 'classic' | 'cover' | 'contain' | 'stretch' | 'center';
+}
+
+export const backgroundDefaults: BackgroundPrefs = { items: [], current: null, fit: 'classic' };

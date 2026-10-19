@@ -11,11 +11,13 @@ import { getTextgenType, stringHash, type StTemplates } from '@bakatavern/core';
 
 import {
   basePreset,
+  groupMembers,
   scenarioModel,
   personaDefaults,
   stReasoningDefaults,
   stWorldInfoDefaults,
   type PersonaFields,
+  type CardFields,
   type Scenario,
   type ScenarioMessage,
   stSources,
@@ -35,6 +37,8 @@ const PRESET_TO_SETTINGS: Record<string, string> = {
 };
 
 export const CHAT_NAME = 'Scenario - 2026-10-15@00h00m00s';
+/** SillyTavern names groups by their creation time. */
+export const GROUP_ID = '1760486400000';
 const SEND_DATE = 'October 15, 2026 12:00am';
 
 export function scenarioPersona(scenario: Scenario): PersonaFields {
@@ -99,9 +103,14 @@ function cardPng(card: object): Buffer {
   ]);
 }
 
-/** The card in SillyTavern's stored shape (V1 fields on top, V2 `data`). */
+/** The replying card in SillyTavern's stored shape (V1 fields on top, V2 `data`). */
 export function stCard(scenario: Scenario) {
-  const c = scenario.card;
+  return stCardOf(scenario, scenario.card);
+}
+
+/** A card of the scenario (the replying one or another group member). */
+export function stCardOf(scenario: Scenario, c: CardFields) {
+  const replying = c === scenario.card;
   const data = {
     name: c.name,
     description: c.description ?? '',
@@ -121,7 +130,7 @@ export function stCard(scenario: Scenario) {
       fav: false,
       world: '',
       depth_prompt: { prompt: '', depth: 4, role: 'system' },
-      ...(scenario.regex?.character ? { regex_scripts: scenario.regex.character } : {}),
+      ...(replying && scenario.regex?.character ? { regex_scripts: scenario.regex.character } : {}),
       ...c.extensions,
     },
   };
@@ -145,14 +154,19 @@ export function stCard(scenario: Scenario) {
   };
 }
 
+/** The avatar URL SillyTavern stores with group members' messages. */
+const thumbnail = (avatar: string) => `/thumbnail?type=avatar&file=${encodeURIComponent(avatar)}`;
+
 function chatJsonl(scenario: Scenario): string {
   const persona = scenarioPersona(scenario);
-  const header = {
-    user_name: persona.name,
-    character_name: scenario.card.name,
-    create_date: '2026-10-15@00h00m00s',
-    chat_metadata: { ...scenario.chatMetadata },
-  };
+  const header = scenario.group
+    ? { chat_metadata: { ...scenario.chatMetadata }, user_name: 'unused', character_name: 'unused' }
+    : {
+        user_name: persona.name,
+        character_name: scenario.card.name,
+        create_date: '2026-10-15@00h00m00s',
+        chat_metadata: { ...scenario.chatMetadata },
+      };
   const lines = scenarioChat(scenario).map((m) => {
     const message: Record<string, unknown> = {
       name: m.name ?? (m.user ? persona.name : scenario.card.name),
@@ -162,6 +176,10 @@ function chatJsonl(scenario: Scenario): string {
       mes: m.mes,
       extra: { ...(m.reasoning ? { reasoning: m.reasoning } : {}), ...m.extra },
     };
+    if (!m.user && scenario.group) {
+      const avatar = `${message.name as string}.png`;
+      Object.assign(message, { original_avatar: avatar, force_avatar: thumbnail(avatar) });
+    }
     if (!m.user) {
       Object.assign(message, {
         swipe_id: 0,
@@ -236,12 +254,35 @@ export function writeStData(
 ) {
   const user = join(dataRoot, 'default-user');
   const avatar = `${scenario.card.name}.png`;
-  for (const dir of ['characters', `chats/${scenario.card.name}`, 'worlds']) {
+  const chatDir = scenario.group ? 'group chats' : `chats/${scenario.card.name}`;
+  for (const dir of ['characters', chatDir, 'groups', 'worlds']) {
     mkdirSync(join(user, dir), { recursive: true });
   }
 
-  writeFileSync(join(user, 'characters', avatar), cardPng(stCard(scenario)));
-  writeFileSync(join(user, 'chats', scenario.card.name, `${CHAT_NAME}.jsonl`), chatJsonl(scenario));
+  for (const member of groupMembers(scenario)) {
+    writeFileSync(join(user, 'characters', `${member.name}.png`), cardPng(stCardOf(scenario, member)));
+  }
+  writeFileSync(join(user, chatDir, `${CHAT_NAME}.jsonl`), chatJsonl(scenario));
+  if (scenario.group) {
+    const group = scenario.group;
+    const stGroup = {
+      id: GROUP_ID,
+      name: 'Scenario group',
+      members: groupMembers(scenario).map((m) => `${m.name}.png`),
+      avatar_url: '',
+      allow_self_responses: false,
+      activation_strategy: 0,
+      generation_mode: group.generationMode ?? 0,
+      disabled_members: (group.muted ?? []).map((name) => `${name}.png`),
+      fav: false,
+      chat_id: CHAT_NAME,
+      chats: [CHAT_NAME],
+      auto_mode_delay: 5,
+      generation_mode_join_prefix: group.joinPrefix ?? '',
+      generation_mode_join_suffix: group.joinSuffix ?? '',
+    };
+    writeFileSync(join(user, 'groups', `${GROUP_ID}.json`), JSON.stringify(stGroup, null, 4));
+  }
   for (const [path, base64] of Object.entries(scenario.files ?? {})) {
     mkdirSync(join(user, dirname(path)), { recursive: true });
     writeFileSync(join(user, path), Buffer.from(base64, 'base64'));

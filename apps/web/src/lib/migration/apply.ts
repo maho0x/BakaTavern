@@ -4,7 +4,9 @@ import {
   connectionDefaults,
   logitBiasDefaults,
   noteDefaults,
+  backgroundDefaults,
   personaDefaults,
+  quickReplyDefaults,
   regexDefaults,
   textConnectionDefaults,
   worldInfoDefaults,
@@ -12,6 +14,7 @@ import {
 } from '../state/prefs.ts';
 import { profileDefaults } from '../state/profiles.ts';
 import { settings } from '../state/settings.svelte.ts';
+import { THEME_KIND, themeFromSt } from '../state/themes.ts';
 import { mapStSettings, type StImportStash } from './st-settings.ts';
 
 const NAMESPACE = 'st_import';
@@ -107,7 +110,41 @@ export async function applyStImport(): Promise<boolean> {
     ...(settings.get('variables', {}) as Record<string, unknown>),
     ...patch.variables,
   });
+  if (Object.keys(patch.quickReply).length) {
+    const qr = { ...quickReplyDefaults, ...settings.get('quickReply', quickReplyDefaults) };
+    const imported = patch.quickReply.config?.setList ?? [];
+    settings.update('quickReply', {
+      ...patch.quickReply,
+      config: {
+        setList: [...qr.config.setList.filter((l) => !imported.some((i) => i.set === l.set)), ...imported],
+      },
+      characterConfigs: { ...qr.characterConfigs, ...patch.quickReply.characterConfigs },
+    });
+  }
+  // The theme SillyTavern was using, when its file came along.
+  const powerUser = (full.settings.power_user ?? {}) as Record<string, unknown>;
+  const themeName = typeof powerUser.theme === 'string' ? powerUser.theme : '';
+  const themeId = themeName ? full.presets[`${THEME_KIND}/${themeName}`] : undefined;
+  if (themeId) {
+    try {
+      const style = themeFromSt((await api.getPreset(themeId)).data);
+      settings.update('ui', { ...style.ui, themeName, themeColors: style.colors });
+    } catch {
+      // keep the current look
+    }
+  }
+  if (Object.keys(patch.background).length) {
+    const current = { ...backgroundDefaults, ...settings.get('backgrounds', backgroundDefaults) };
+    const imported = patch.background.items ?? [];
+    settings.update('backgrounds', {
+      ...patch.background,
+      items: [...current.items.filter((b) => !imported.some((i) => i.name === b.name)), ...imported],
+    });
+  }
   for (const namespace of [
+    'ui',
+    'backgrounds',
+    'quickReply',
     'connection',
     'formatting',
     'logitbias',

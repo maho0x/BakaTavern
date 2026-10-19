@@ -17,6 +17,16 @@
     root.style.setProperty('--bt-chat-width', `${prefs.chatWidth}rem`);
   });
 
+  // An imported theme's colors, over the built-in ones (the previous theme's are taken away first).
+  let themed: string[] = [];
+  $effect(() => {
+    const root = document.documentElement;
+    const colors = prefs.themeColors ?? {};
+    for (const token of themed) root.style.removeProperty(token);
+    themed = Object.keys(colors).filter((token) => token.startsWith('--bt-'));
+    for (const token of themed) root.style.setProperty(token, colors[token]!);
+  });
+
   $effect(() => {
     let style = document.getElementById('bt-user-css');
     if (!style) {

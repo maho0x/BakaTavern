@@ -74,3 +74,9 @@ export function renderMessage(text: string, options: RenderOptions): string {
     ],
   });
 }
+
+/** HTML written by a script or a plugin (popups, toasts) → safe HTML. */
+export function sanitizeHtml(html: string): string {
+  installHooks();
+  return DOMPurify.sanitize(html, { FORBID_TAGS: ['style'] });
+}

@@ -10,5 +10,8 @@ export const panelTabs: { id: PanelId; icon: IconName; label: MessageKey }[] = [
   { id: 'persona', icon: 'user', label: 'panel.persona' },
   { id: 'worldinfo', icon: 'book', label: 'panel.worldinfo' },
   { id: 'regex', icon: 'regex', label: 'panel.regex' },
+  { id: 'quickreplies', icon: 'zap', label: 'panel.quickreplies' },
+  { id: 'frontend', icon: 'code', label: 'panel.frontend' },
+  { id: 'plugins', icon: 'puzzle', label: 'panel.plugins' },
   { id: 'settings', icon: 'gear', label: 'panel.settings' },
 ];

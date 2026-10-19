@@ -5,6 +5,10 @@
   import { chatDefaults } from '../../state/prefs.ts';
   import { settings } from '../../state/settings.svelte.ts';
   import { errorText, ui } from '../../state/ui.svelte.ts';
+  import { pluginExtensions } from '../../plugins/extensions.svelte.ts';
+  import QuickReplyBar from '../../quickreplies/QuickReplyBar.svelte';
+  import ScriptButtons from '../../th/ScriptButtons.svelte';
+  import { scripts } from '../../stscript/runtime.svelte.ts';
 
   let textarea = $state<HTMLTextAreaElement>();
   let fileInput = $state<HTMLInputElement>();
@@ -32,7 +36,7 @@
       ? `${Math.max(1, Math.round(bytes / 1024))} KB`
       : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
   const prefs = $derived(settings.get('chat', chatDefaults));
-  const busy = $derived(!!chat.generation);
+  const busy = $derived(chat.busy || scripts.running > 0);
 
   $effect(() => {
     // Grow with the content (up to the max-height in CSS).
@@ -53,7 +57,19 @@
 
   function send() {
     if (busy) return;
-    void run(() => chat.send(chat.draft));
+    const text = chat.draft;
+    // A message starting with a slash is an STscript (SillyTavern `processCommands`).
+    if (text.trim().startsWith('/')) {
+      chat.draft = '';
+      void run(() => scripts.runInput(text));
+      return;
+    }
+    void run(() => chat.send(text));
+  }
+
+  function stop() {
+    scripts.abortAll();
+    chat.stop();
   }
 
   function onKeydown(event: KeyboardEvent) {
@@ -66,109 +82,121 @@
   }
 </script>
 
-<form
-  class="composer"
-  onsubmit={(e) => (e.preventDefault(), send())}
-  ondragover={(e) => {
-    if (e.dataTransfer?.types.includes('Files')) {
-      e.preventDefault();
-      dragging = true;
-    }
-  }}
-  ondragleave={() => (dragging = false)}
-  ondrop={onDrop}
->
-  {#if chat.attachments.length}
-    <ul class="pending" aria-label={t('chat.attachments')}>
-      {#each chat.attachments as item (item.id)}
-        <li>
-          {#if item.preview}<img src={item.preview} alt="" />{:else}<span class="kind"
-              ><Icon name={item.kind === 'file' ? 'file' : 'image'} size={16} /></span
-            >{/if}
-          <span class="name">{item.file.name}</span>
-          <span class="size">{sizeText(item.file.size)}</span>
-          <button
-            type="button"
-            class="icon-btn small"
-            aria-label={t('chat.detach', { name: item.file.name })}
-            onclick={() => chat.detach(item.id)}><Icon name="close" size={14} /></button
-          >
-        </li>
-      {/each}
-    </ul>
-  {/if}
-  <div class="box" class:dragging>
-    <div class="more">
+<div class="bottom">
+  <ScriptButtons />
+  <QuickReplyBar />
+  <form
+    class="composer"
+    onsubmit={(e) => (e.preventDefault(), send())}
+    ondragover={(e) => {
+      if (e.dataTransfer?.types.includes('Files')) {
+        e.preventDefault();
+        dragging = true;
+      }
+    }}
+    ondragleave={() => (dragging = false)}
+    ondrop={onDrop}
+  >
+    {#if chat.attachments.length}
+      <ul class="pending" aria-label={t('chat.attachments')}>
+        {#each chat.attachments as item (item.id)}
+          <li>
+            {#if item.preview}<img src={item.preview} alt="" />{:else}<span class="kind"
+                ><Icon name={item.kind === 'file' ? 'file' : 'image'} size={16} /></span
+              >{/if}
+            <span class="name">{item.file.name}</span>
+            <span class="size">{sizeText(item.file.size)}</span>
+            <button
+              type="button"
+              class="icon-btn small"
+              aria-label={t('chat.detach', { name: item.file.name })}
+              onclick={() => chat.detach(item.id)}><Icon name="close" size={14} /></button
+            >
+          </li>
+        {/each}
+      </ul>
+    {/if}
+    <div class="box" class:dragging>
+      <div class="more">
+        <button
+          type="button"
+          class="icon-btn"
+          aria-label={t('chat.actions')}
+          aria-expanded={menuOpen}
+          onclick={() => (menuOpen = !menuOpen)}
+          disabled={busy}
+        >
+          <Icon name="plus" />
+        </button>
+        {#if menuOpen}
+          <div class="menu" role="menu">
+            <button type="button" role="menuitem" onclick={() => run(() => chat.generate('continue'))}
+              ><Icon name="forward" size={15} />{t('chat.continue')}</button
+            >
+            <button type="button" role="menuitem" onclick={() => run(() => chat.regenerate())}
+              ><Icon name="refresh" size={15} />{t('chat.regenerate')}</button
+            >
+            <button type="button" role="menuitem" onclick={() => run(() => chat.generate('impersonate'))}
+              ><Icon name="feather" size={15} />{t('chat.impersonate')}</button
+            >
+            {#each pluginExtensions.composerActions as action (action.key)}
+              <button type="button" role="menuitem" onclick={() => run(async () => action.onClick())}
+                ><Icon name="puzzle" size={15} />{action.label}</button
+              >
+            {/each}
+          </div>
+        {/if}
+      </div>
       <button
         type="button"
         class="icon-btn"
-        aria-label={t('chat.actions')}
-        aria-expanded={menuOpen}
-        onclick={() => (menuOpen = !menuOpen)}
+        title={t('chat.attach')}
+        aria-label={t('chat.attach')}
         disabled={busy}
+        onclick={() => fileInput?.click()}><Icon name="clip" /></button
       >
-        <Icon name="plus" />
-      </button>
-      {#if menuOpen}
-        <div class="menu" role="menu">
-          <button type="button" role="menuitem" onclick={() => run(() => chat.generate('continue'))}
-            ><Icon name="forward" size={15} />{t('chat.continue')}</button
-          >
-          <button type="button" role="menuitem" onclick={() => run(() => chat.regenerate())}
-            ><Icon name="refresh" size={15} />{t('chat.regenerate')}</button
-          >
-          <button type="button" role="menuitem" onclick={() => run(() => chat.generate('impersonate'))}
-            ><Icon name="feather" size={15} />{t('chat.impersonate')}</button
-          >
-        </div>
+      <input
+        bind:this={fileInput}
+        type="file"
+        multiple
+        hidden
+        accept="image/*,video/*,audio/*,text/*,.md,.json,.jsonl,.csv,.tsv,.xml,.yaml,.yml,.html,.htm,.srt,.vtt,.log"
+        onchange={(e) => {
+          chat.attach(e.currentTarget.files ?? []);
+          e.currentTarget.value = '';
+        }}
+      />
+      <textarea
+        bind:this={textarea}
+        bind:value={chat.draft}
+        rows="1"
+        placeholder={t('chat.placeholder', { name: chat.userName })}
+        aria-label={t('chat.placeholder', { name: chat.userName })}
+        onkeydown={onKeydown}
+        onpaste={onPaste}></textarea>
+      {#if busy}
+        <button
+          type="button"
+          class="send stop"
+          aria-label={t('chat.stop')}
+          title={t('chat.stop')}
+          onclick={stop}
+        >
+          <Icon name="stop" />
+        </button>
+      {:else}
+        <button type="submit" class="send" aria-label={t('chat.send')} title={t('chat.send')}
+          ><Icon name="send" /></button
+        >
       {/if}
     </div>
-    <button
-      type="button"
-      class="icon-btn"
-      title={t('chat.attach')}
-      aria-label={t('chat.attach')}
-      disabled={busy}
-      onclick={() => fileInput?.click()}><Icon name="clip" /></button
-    >
-    <input
-      bind:this={fileInput}
-      type="file"
-      multiple
-      hidden
-      accept="image/*,video/*,audio/*,text/*,.md,.json,.jsonl,.csv,.tsv,.xml,.yaml,.yml,.html,.htm,.srt,.vtt,.log"
-      onchange={(e) => {
-        chat.attach(e.currentTarget.files ?? []);
-        e.currentTarget.value = '';
-      }}
-    />
-    <textarea
-      bind:this={textarea}
-      bind:value={chat.draft}
-      rows="1"
-      placeholder={t('chat.placeholder', { name: chat.userName })}
-      aria-label={t('chat.placeholder', { name: chat.userName })}
-      onkeydown={onKeydown}
-      onpaste={onPaste}></textarea>
-    {#if busy}
-      <button
-        type="button"
-        class="send stop"
-        aria-label={t('chat.stop')}
-        title={t('chat.stop')}
-        onclick={() => chat.stop()}
-      >
-        <Icon name="stop" />
-      </button>
-    {:else}
-      <button type="submit" class="send" aria-label={t('chat.send')} title={t('chat.send')}
-        ><Icon name="send" /></button
-      >
-    {/if}
-  </div>
-</form>
+  </form>
+</div>
 
 <style>
+  .bottom {
+    min-width: 0;
+  }
   .composer {
     padding: 0.5rem var(--bt-gutter) calc(0.75rem + env(safe-area-inset-bottom));
   }

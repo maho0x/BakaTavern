@@ -13,6 +13,8 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.base.json ./
 COPY apps/web/package.json apps/web/
 COPY packages/core/package.json packages/core/
 COPY packages/api-client/package.json packages/api-client/
+COPY packages/th-bridge/package.json packages/th-bridge/
+COPY packages/plugin-api/package.json packages/plugin-api/
 RUN pnpm install --frozen-lockfile --filter "@bakatavern/web..."
 COPY packages packages
 COPY apps/web apps/web

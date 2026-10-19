@@ -1,0 +1,40 @@
+{
+  "scenario": "raw",
+  "image": "ghcr.io/sillytavern/sillytavern:1.19.0",
+  "recordedAt": "2026-10-19T08:23:44.951Z",
+  "request": {
+    "path": "/v1/chat/completions",
+    "body": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "You are Aiko. Be brief."
+        },
+        {
+          "role": "user",
+          "content": "Name three teas, User."
+        },
+        {
+          "role": "assistant",
+          "content": "Green, black and oolong."
+        },
+        {
+          "role": "user",
+          "content": "Which one does Aiko like?",
+          "name": "Guest"
+        },
+        {
+          "role": "assistant",
+          "content": "Well,"
+        }
+      ],
+      "model": "mock-model",
+      "temperature": 1,
+      "max_tokens": 300,
+      "stream": false,
+      "presence_penalty": 0,
+      "frequency_penalty": 0,
+      "top_p": 1
+    }
+  }
+}

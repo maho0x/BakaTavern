@@ -3,7 +3,7 @@ use serde::Serialize;
 use serde_json::Value;
 use ts_rs::TS;
 
-use super::characters;
+use super::{characters, groups};
 use crate::error::OptionalExt;
 use crate::util::{json_text, new_id, now_ms};
 use crate::{Result, StoreError};
@@ -85,6 +85,25 @@ pub fn list_for_character(
     Ok(rows)
 }
 
+pub fn list_for_group(conn: &Connection, user_id: &str, group_id: &str) -> Result<Vec<Chat>> {
+    let mut stmt = conn.prepare(&format!(
+        "SELECT {COLUMNS} FROM chats WHERE user_id = ?1 AND group_id = ?2 ORDER BY updated_at DESC"
+    ))?;
+    let rows = stmt
+        .query_map(params![user_id, group_id], from_row)?
+        .collect::<rusqlite::Result<_>>()?;
+    Ok(rows)
+}
+
+/// The other chats of the same character or group (their titles must differ).
+pub fn siblings(conn: &Connection, user_id: &str, chat: &Chat) -> Result<Vec<Chat>> {
+    match (&chat.character_id, &chat.group_id) {
+        (Some(character_id), _) => list_for_character(conn, user_id, character_id),
+        (None, Some(group_id)) => list_for_group(conn, user_id, group_id),
+        (None, None) => Ok(Vec::new()),
+    }
+}
+
 pub fn list_recent(conn: &Connection, user_id: &str, limit: i64) -> Result<Vec<Chat>> {
     let mut stmt = conn.prepare(&format!(
         "SELECT {COLUMNS} FROM chats WHERE user_id = ?1 AND message_count > 0 ORDER BY updated_at DESC LIMIT ?2"
@@ -104,18 +123,20 @@ pub struct NewChat {
     pub created_at: Option<i64>,
 }
 
-/// Returns `base`, or `base (2)`, `base (3)`, ... — the first title unused by the same owner.
+/// Returns `base`, or `base (2)`, `base (3)`, ... — the first title unused by the same character
+/// or group.
 pub fn unique_title(
     conn: &Connection,
     user_id: &str,
     character_id: Option<&str>,
+    group_id: Option<&str>,
     base: &str,
 ) -> Result<String> {
     let taken = |title: &str| -> Result<bool> {
         Ok(conn
             .query_row(
-                "SELECT 1 FROM chats WHERE user_id = ?1 AND character_id IS ?2 AND title = ?3",
-                params![user_id, character_id, title],
+                "SELECT 1 FROM chats WHERE user_id = ?1 AND character_id IS ?2 AND group_id IS ?3 AND title = ?4",
+                params![user_id, character_id, group_id, title],
                 |_| Ok(()),
             )
             .optional()?
@@ -144,7 +165,22 @@ pub fn create(conn: &Connection, user_id: &str, new: NewChat) -> Result<Chat> {
     {
         return Err(StoreError::NotFound);
     }
-    let title = unique_title(conn, user_id, new.character_id.as_deref(), new.title.trim())?;
+    if let Some(group_id) = &new.group_id {
+        groups::ensure_owner(conn, user_id, group_id)?;
+    }
+    // A group chat belongs to its group only.
+    let character_id = if new.group_id.is_some() {
+        None
+    } else {
+        new.character_id
+    };
+    let title = unique_title(
+        conn,
+        user_id,
+        character_id.as_deref(),
+        new.group_id.as_deref(),
+        new.title.trim(),
+    )?;
     let id = new_id();
     let now = now_ms();
     conn.execute(
@@ -153,7 +189,7 @@ pub fn create(conn: &Connection, user_id: &str, new: NewChat) -> Result<Chat> {
         params![
             id,
             user_id,
-            new.character_id,
+            character_id,
             new.group_id,
             title,
             json_text(&new.metadata),
@@ -176,9 +212,13 @@ pub fn update(
     let current = get(conn, user_id, id)?;
     super::check_rev(current.rev, expected_rev)?;
     let title = match title {
-        Some(t) if t.trim() != current.title => {
-            unique_title(conn, user_id, current.character_id.as_deref(), t.trim())?
-        }
+        Some(t) if t.trim() != current.title => unique_title(
+            conn,
+            user_id,
+            current.character_id.as_deref(),
+            current.group_id.as_deref(),
+            t.trim(),
+        )?,
         _ => current.title.clone(),
     };
     let metadata = metadata.unwrap_or(&current.metadata);
@@ -213,6 +253,10 @@ pub fn refresh_stats(conn: &Connection, chat_id: &str) -> Result<()> {
     )?;
     conn.execute(
         "UPDATE characters SET last_chat_at = ?2 WHERE id = (SELECT character_id FROM chats WHERE id = ?1)",
+        params![chat_id, now],
+    )?;
+    conn.execute(
+        "UPDATE groups SET last_chat_at = ?2 WHERE id = (SELECT group_id FROM chats WHERE id = ?1)",
         params![chat_id, now],
     )?;
     Ok(())

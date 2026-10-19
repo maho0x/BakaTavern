@@ -4,6 +4,12 @@
  * injections, World Info, example dialogues, then `buildChatCompletion` and the provider request.
  */
 
+import {
+  groupCharacterCards,
+  groupDepthPrompts,
+  groupMacroNames,
+  type GroupPromptContext,
+} from '../group/index.ts';
 import { cardData, type CardData } from '../model/card.ts';
 import { objectVariables, type MacroEngine, type MacroEnv } from '../macros/index.ts';
 import {
@@ -16,7 +22,10 @@ import {
   examplesToMessages,
   ExtensionPromptPosition,
   ExtensionPromptRole,
+  formatInstructChat,
   formatInstructExamples,
+  formatInstructPrompt,
+  formatInstructStoryString,
   InjectKeys,
   instructStoppingSequences,
   joinExtensionPrompts,
@@ -39,6 +48,7 @@ import {
   type ExtensionPrompt,
   type GenerationType,
   type HistoryMessage,
+  type ChatMessage,
   type InstructContext,
   type InstructTemplate,
   type ReasoningPromptSettings,
@@ -207,6 +217,8 @@ interface CommonOptions {
   quietName?: string;
   /** Put the character's name before the reply (quiet generations force it). */
   forceName2?: boolean;
+  /** A group chat: the members and the one replying (whose card is `card`). */
+  group?: GroupPromptContext;
   /** Extra injections from plugins, keyed like SillyTavern extension prompts. */
   extraInjections?: Record<string, ExtensionPrompt>;
   /** "Start reply with" (SillyTavern `user_prompt_bias`). */
@@ -348,6 +360,7 @@ export function macroEnvFor(options: PrepareOptions, card: CardData): MacroEnv {
     chatStart: formatting.context.chat_start,
     exampleSeparator: formatting.context.example_separator,
     bannedWords: [],
+    ...(options.group ? groupMacroNames(options.group.members, card.name) : {}),
   };
 }
 
@@ -403,12 +416,39 @@ export async function prepareGeneration(options: PrepareOptions): Promise<Prepar
     return value.replace(/\r/g, '');
   };
   const base = (text: string) => (text ? chatReplace(text.trim()) : '');
+  // ... with another member as `{{char}}` (SillyTavern `baseChatReplace(value, null, name)`).
+  const group = options.group;
+  const isGroup = Boolean(group);
+  const chatReplaceAs = (text: string, charName: string | null) => {
+    if (charName === null || charName === card.name) return chatReplace(text);
+    if (!text) return text;
+    const names = group ? groupMacroNames(group.members, charName) : {};
+    let value = macros.evaluate(text, { ...cardEnv, ...names, char: charName });
+    if (formatting.collapseNewlines) value = collapseNewlines(value);
+    return value.replace(/\r/g, '');
+  };
+  // The append modes join every member's card (SillyTavern `getGroupCharacterCards`).
+  const groupCards = group
+    ? groupCharacterCards(
+        group,
+        {
+          scenario: String(options.chatMetadata.scenario || ''),
+          mesExamples: String(options.chatMetadata.mes_example || ''),
+        },
+        chatReplaceAs,
+      )
+    : null;
+  const groupNames = group ? group.members.map((m) => m.name) : [];
 
-  const description = base(card.description);
-  const personality = base(card.personality);
-  const scenario = base(String(options.chatMetadata.scenario || card.scenario));
+  const description = groupCards ? groupCards.description : base(card.description);
+  const personality = groupCards ? groupCards.personality : base(card.personality);
+  const scenario = groupCards
+    ? groupCards.scenario
+    : base(String(options.chatMetadata.scenario || card.scenario));
   const personaText = base(options.persona.description);
-  const examplesText = base(String(options.chatMetadata.mes_example || card.mes_example));
+  const examplesText = groupCards
+    ? groupCards.mesExamples
+    : base(String(options.chatMetadata.mes_example || card.mes_example));
   const systemPrompt = formatting.preferCharacterPrompt
     ? base(String(options.chatMetadata.system_prompt || card.system_prompt))
     : '';
@@ -436,16 +476,30 @@ export async function prepareGeneration(options: PrepareOptions): Promise<Prepar
     ext[key] = { value, position, depth, scan, role };
   };
 
-  // Character depth prompt (character's note)
-  const dp = card.extensions.depth_prompt;
-  set(
-    InjectKeys.DEPTH_PROMPT,
-    depthPrompt,
-    ExtensionPromptPosition.IN_CHAT,
-    dp?.depth ?? 4,
-    options.authorsNote.allowWIScan,
-    roleId(dp?.role),
-  );
+  // Character depth prompt (character's note); every member's in a group's append modes.
+  const memberDepthPrompts = group ? groupDepthPrompts(group, chatReplaceAs) : [];
+  if (memberDepthPrompts.length) {
+    memberDepthPrompts.forEach((prompt, i) =>
+      set(
+        InjectKeys.depthPromptIndex(i),
+        prompt.text,
+        ExtensionPromptPosition.IN_CHAT,
+        prompt.depth,
+        options.authorsNote.allowWIScan,
+        roleId(prompt.role),
+      ),
+    );
+  } else {
+    const dp = card.extensions.depth_prompt;
+    set(
+      InjectKeys.DEPTH_PROMPT,
+      depthPrompt,
+      ExtensionPromptPosition.IN_CHAT,
+      dp?.depth ?? 4,
+      options.authorsNote.allowWIScan,
+      roleId(dp?.role),
+    );
+  }
 
   // Messages that enter the prompt, with regex scripts and past reasoning applied
   const isContinue = type === 'continue';
@@ -493,6 +547,8 @@ export async function prepareGeneration(options: PrepareOptions): Promise<Prepar
   );
   for (let i = core.length - 1; i >= 0; i--) {
     const message = core[i]!;
+    // In a group only the speaker's own reasoning goes back.
+    if (isGroup && message.name !== card.name) continue;
     const reasoningText = getRegexedString(
       String(message.extra.reasoning ?? ''),
       RegexPlacement.REASONING,
@@ -673,7 +729,8 @@ export async function prepareGeneration(options: PrepareOptions): Promise<Prepar
     context: formatting.context,
     userName: persona.name,
     charName: card.name,
-    isGroup: false,
+    isGroup,
+    groupNames,
     substitute: (text, names) => (names ? macros.evaluate(text, { ...env, ...names }) : substitute(text)),
   };
   env.mesExamples = (isInstruct ? formatInstructExamples(instructContext, cardBlocks) : cardBlocks).join('');
@@ -756,52 +813,30 @@ export async function prepareGeneration(options: PrepareOptions): Promise<Prepar
       maxPromptTokens: maxPrompt,
       countTokens: countText,
       substitute: instructContext.substitute,
+      isGroup,
+      groupNames,
     });
 
-    // Stop strings (SillyTavern `getStoppingStrings`)
-    const stops: string[] = [];
-    if (context.names_as_stop_strings) {
-      const charString = `\n${card.name}:`;
-      const userString = `\n${persona.name}:`;
-      stops.push(isImpersonate ? charString : userString, userString);
-      if (isContinue && options.messages.at(-1)?.role === 'user') stops.push(charString);
-    }
-    stops.push(...instructStoppingSequences(instructContext, isInstruct), ...customStops);
-    if (context.single_line) stops.unshift('\n');
-    const stoppingStrings = stops.filter((x) => x).filter((x, i, all) => all.indexOf(x) === i);
-
-    // Token ids for banned tokens and logit bias, looked up while the body is built.
-    const idTokenizer = text.idTokenizer;
-    const ids = new Map<string, number[]>();
-    if (idTokenizer?.encode) {
-      for (const value of textgenTokenizationNeeds(text.settings, (v) => substitute(v), env.bannedWords)) {
-        try {
-          ids.set(value, await idTokenizer.encode(value));
-        } catch {
-          // left out, like SillyTavern
-        }
-      }
-    }
-    const stream = Boolean(text.settings.streaming) && type !== 'quiet';
-    const data = textgenGenerateData({
-      settings: text.settings,
-      prompt: prompt.prompt,
+    const stoppingStrings = textStoppingStrings(instructContext, isInstruct, {
+      isImpersonate,
+      continuesUser: isContinue && options.messages.at(-1)?.role === 'user',
+      groupNames,
+      customStops,
+    });
+    const { data, http, stream } = await textRequest(text, prompt.prompt, {
+      type,
       maxTokens: maxResponse,
       maxContext,
-      type,
       stoppingStrings,
-      substitute: (value) => substitute(value),
-      bannedInMacros: env.bannedWords,
-      tokenize: (value) => ids.get(value),
-      logprobs: text.logprobs,
-      stream,
+      substitute,
+      bannedWords: env.bannedWords,
     });
     return {
       ...common,
       api: 'text',
       data,
       prompt,
-      http: textgenRequest(data),
+      http,
       stream,
       stoppingStrings,
     };
@@ -812,8 +847,10 @@ export async function prepareGeneration(options: PrepareOptions): Promise<Prepar
   const model = options.connection.model;
   const sourceId = options.connection.provider.id;
   const history: HistoryMessage[] = core.map((m) => {
-    // Signatures and reasoning only go back to the API and model that made them.
+    // Signatures and reasoning only go back to the API and model that made them, and in a group
+    // only to the member who wrote them.
     const sameModel = m.extra.api === sourceId && m.extra.model === model;
+    const ownReasoning = sameModel && !(isGroup && m.name !== card.name);
     const invocations = Array.isArray(m.extra.tool_invocations)
       ? (m.extra.tool_invocations as ToolInvocation[]).map((i) => {
           if (sameModel || !(i.signature || i.reasoning)) return i;
@@ -827,10 +864,10 @@ export async function prepareGeneration(options: PrepareOptions): Promise<Prepar
       content: m.content,
       forceAvatar: m.forceAvatar,
       signature:
-        sameModel && typeof m.extra.reasoning_signature === 'string'
+        ownReasoning && typeof m.extra.reasoning_signature === 'string'
           ? m.extra.reasoning_signature
           : undefined,
-      reasoning: sameModel ? String(m.extra.reasoning ?? '') : '',
+      reasoning: ownReasoning ? String(m.extra.reasoning ?? '') : '',
       media: messageAttachments(m.extra, options.mediaDisplay),
       invocations,
     };
@@ -854,7 +891,7 @@ export async function prepareGeneration(options: PrepareOptions): Promise<Prepar
   const prompt = await buildChatCompletion({
     type,
     preset,
-    isGroup: false,
+    isGroup,
     charDescription: description,
     charPersonality: personality,
     scenario,
@@ -870,13 +907,13 @@ export async function prepareGeneration(options: PrepareOptions): Promise<Prepar
     messages: toPromptMessages(history, {
       namesBehavior: preset.names_behavior,
       userName: persona.name,
-      isGroup: false,
+      isGroup,
     }),
     messageExamples: examplesToMessages(blocks, {
       userName: persona.name,
       charName: card.name,
-      groupNames: [],
-      isGroup: false,
+      groupNames,
+      isGroup,
     }),
     pinExamples: options.pinExamples ?? false,
     substitute,
@@ -891,31 +928,139 @@ export async function prepareGeneration(options: PrepareOptions): Promise<Prepar
     },
   });
 
-  const names = { charName: card.name, userName: persona.name, groupNames: [] as string[] };
-  const connection = options.connection;
+  const stoppingStrings = customStops.filter(Boolean);
+  const request = await chatRequest(options, {
+    messages: prompt.messages,
+    type,
+    names: { charName: card.name, userName: persona.name, groupNames },
+    substitute,
+    stoppingStrings,
+    // No prefill for quiet generations, or when continuing by prefill.
+    prefill: !(isContinue && preset.continue_prefill),
+    tools: canPerformTools && options.tools?.length ? options.tools : undefined,
+  });
+  return {
+    ...common,
+    api: 'chat',
+    request,
+    http: adapterFor(options.connection.provider).buildRequest(request),
+    prompt,
+    stream: request.stream,
+    stoppingStrings,
+  };
+}
+
+/** Text Completion stop strings (SillyTavern `getStoppingStrings`). */
+function textStoppingStrings(
+  f: InstructContext,
+  isInstruct: boolean,
+  options: {
+    isImpersonate: boolean;
+    continuesUser: boolean;
+    groupNames: readonly string[];
+    customStops: string[];
+  },
+): string[] {
+  const stops: string[] = [];
+  if (f.context.names_as_stop_strings) {
+    const charString = `\n${f.charName}:`;
+    const userString = `\n${f.userName}:`;
+    stops.push(options.isImpersonate ? charString : userString, userString);
+    if (options.continuesUser) stops.push(charString);
+    // The other members' names too.
+    stops.push(
+      ...options.groupNames.filter((name) => name && name !== f.charName).map((name) => `\n${name}:`),
+    );
+  }
+  stops.push(...instructStoppingSequences(f, isInstruct), ...options.customStops);
+  if (f.context.single_line) stops.unshift('\n');
+  return stops.filter((x) => x).filter((x, i, all) => all.indexOf(x) === i);
+}
+
+/** The Text Completion request body, with token ids for banned tokens and logit bias. */
+async function textRequest(
+  text: TextCompletionSetup,
+  prompt: string,
+  options: {
+    type: GenerationType;
+    maxTokens: number;
+    maxContext: number;
+    stoppingStrings: string[];
+    substitute: (text: string) => string;
+    bannedWords?: string[];
+  },
+) {
+  const idTokenizer = text.idTokenizer;
+  const ids = new Map<string, number[]>();
+  if (idTokenizer?.encode) {
+    for (const value of textgenTokenizationNeeds(
+      text.settings,
+      (v) => options.substitute(v),
+      options.bannedWords,
+    )) {
+      try {
+        ids.set(value, await idTokenizer.encode(value));
+      } catch {
+        // left out, like SillyTavern
+      }
+    }
+  }
+  const stream = Boolean(text.settings.streaming) && options.type !== 'quiet';
+  const data = textgenGenerateData({
+    settings: text.settings,
+    prompt,
+    maxTokens: options.maxTokens,
+    maxContext: options.maxContext,
+    type: options.type,
+    stoppingStrings: options.stoppingStrings,
+    substitute: (value) => options.substitute(value),
+    bannedInMacros: options.bannedWords,
+    tokenize: (value) => ids.get(value),
+    logprobs: text.logprobs,
+    stream,
+  });
+  return { data, http: textgenRequest(data), stream };
+}
+
+/** The Chat Completion request for prepared messages (SillyTavern `createGenerationParameters`). */
+async function chatRequest(
+  options: ChatCompletionOptions,
+  args: {
+    messages: ChatMessage[];
+    type: GenerationType;
+    names: { charName: string; userName: string; groupNames: string[] };
+    substitute: (text: string) => string;
+    stoppingStrings: string[];
+    /** Claude's assistant prefill applies (not when continuing by prefill). */
+    prefill: boolean;
+    tools?: readonly ToolDefinition[];
+  },
+): Promise<GenerationRequest> {
+  const { preset, connection } = options;
   const provider = connection.provider;
-  let messages = prompt.messages;
+  const isClaude = provider.family === 'anthropic';
+  let messages = args.messages;
   // SillyTavern's server post-processes every source's messages; the OpenAI-style sources do it
   // in their request builder (some force their own type), the others here.
   const ownAdapter = provider.family === 'anthropic' || provider.family === 'gemini';
   if (ownAdapter && preset.custom_prompt_post_processing) {
-    messages = postProcessPrompt(messages, preset.custom_prompt_post_processing, names);
+    messages = postProcessPrompt(messages, preset.custom_prompt_post_processing, args.names);
   }
-  const stoppingStrings = customStops.filter(Boolean);
   const tokenizer = options.tokenizer;
   const logitBias =
     options.logitBias?.length && tokenizer.id !== 'claude' && tokenizer.encode
       ? await chatLogitBias(options.logitBias, (value) => tokenizer.encode!(value))
       : undefined;
-  const prefillSource = type === 'impersonate' ? preset.assistant_impersonation : preset.assistant_prefill;
-  const custom = provider.id === 'custom' ? await customBody(connection.customBody, substitute) : {};
-  const request: GenerationRequest = {
+  const prefillSource =
+    args.type === 'impersonate' ? preset.assistant_impersonation : preset.assistant_prefill;
+  const custom = provider.id === 'custom' ? await customBody(connection.customBody, args.substitute) : {};
+  return {
     provider,
     baseUrl: connection.baseUrl,
     model: connection.model,
     messages,
-    stream: chatStreams(preset, type, provider.id, connection.model),
-    type,
+    stream: chatStreams(preset, args.type, provider.id, connection.model),
+    type: args.type,
     settings: { ...preset, ...connection.settings },
     ...custom,
     params: {
@@ -928,7 +1073,7 @@ export async function prepareGeneration(options: PrepareOptions): Promise<Prepar
       presence_penalty: preset.pres_pen_openai,
       repetition_penalty: preset.repetition_penalty_openai,
       max_tokens: preset.openai_max_tokens,
-      stop: stoppingStrings,
+      stop: args.stoppingStrings,
       seed: preset.seed,
       n: preset.n,
       reasoning_effort: preset.reasoning_effort,
@@ -936,23 +1081,169 @@ export async function prepareGeneration(options: PrepareOptions): Promise<Prepar
       include_reasoning: preset.show_thoughts,
       logit_bias: logitBias,
     },
-    // No prefill for quiet generations, or when continuing by prefill.
     assistantPrefill:
-      isClaude && type !== 'quiet' && !(isContinue && preset.continue_prefill) && prefillSource
-        ? substitute(prefillSource)
+      isClaude && args.type !== 'quiet' && args.prefill && prefillSource
+        ? args.substitute(prefillSource)
         : '',
     useSystemPrompt: preset.use_sysprompt,
-    names,
-    tools: canPerformTools && options.tools?.length ? options.tools : undefined,
+    names: args.names,
+    tools: args.tools,
   };
+}
+
+/** A prompt given directly (`/genraw`, plugins): text, or chat-style messages. */
+export interface RawPromptOptions {
+  prompt: string | readonly { role: 'user' | 'assistant' | 'system'; content: string; name?: string }[];
+  /** Leave instruct formatting out (Text Completion). */
+  instructOverride?: boolean;
+  /** Reply in character rather than as the system (instruct prompt line). */
+  quietToLoud?: boolean;
+  systemPrompt?: string;
+  /** How the reply starts. */
+  prefill?: string;
+}
+
+export type PreparedRawGeneration =
+  | {
+      api: 'chat';
+      http: HttpRequestSpec;
+      request: GenerationRequest;
+      stream: boolean;
+      stoppingStrings: string[];
+      model: string;
+    }
+  | {
+      api: 'text';
+      http: HttpRequestSpec;
+      data: Record<string, unknown>;
+      prompt: string;
+      stream: boolean;
+      stoppingStrings: string[];
+      model: string;
+    };
+
+/**
+ * A generation from a prompt given directly, without the chat (SillyTavern `generateRaw`):
+ * messages pass through as they are for Chat Completion, Text Completion joins them (in instruct
+ * format when it is on).
+ */
+export async function prepareRawGeneration(
+  options: PrepareOptions,
+  raw: RawPromptOptions,
+): Promise<PreparedRawGeneration> {
+  const card = cardData(options.card);
+  const formatting = options.formatting ?? defaultFormattingSettings;
+  const isText = options.api === 'text';
+  const isInstruct = isText && formatting.instructEnabled && !raw.instructOverride;
+  const env = macroEnvFor(options, card);
+  const substitute = (text: string) => options.macros.evaluate(text, env);
+  const userName = options.persona.name;
+  const charName = card.name;
+  const group = options.group;
+  const groupNames = group ? group.members.map((m) => m.name) : [];
+  const f: InstructContext = {
+    instruct: formatting.instruct,
+    context: formatting.context,
+    userName,
+    charName,
+    isGroup: Boolean(group),
+    groupNames,
+    substitute: (text, names) =>
+      names ? options.macros.evaluate(text, { ...env, ...names }) : substitute(text),
+  };
+  let messages =
+    typeof raw.prompt === 'string'
+      ? [{ role: 'user' as const, content: raw.prompt.trim() }]
+      : raw.prompt.map((m) => ({ ...m }));
+  if (typeof raw.prompt !== 'string' && messages.length === 0 && !raw.systemPrompt)
+    throw new Error('No messages provided');
+  const prefill = substitute(raw.prefill ?? '');
+  messages = messages.map((message) => {
+    const name =
+      message.role === 'user'
+        ? (message.name ?? userName)
+        : message.role === 'assistant'
+          ? (message.name ?? charName)
+          : (message.name ?? '');
+    const prefix = isInstruct || !isText ? '' : name ? `${name}: ` : '';
+    let content = prefix + substitute(message.content ?? '');
+    if (isInstruct) {
+      content = formatInstructChat(f, {
+        name,
+        mes: content,
+        isUser: message.role === 'user',
+        isNarrator: message.role === 'system',
+      });
+    }
+    return { ...message, content };
+  });
+  if (raw.systemPrompt) {
+    let system = substitute(raw.systemPrompt);
+    system = isInstruct ? formatInstructStoryString(f, system) : system.trim();
+    if (
+      isInstruct &&
+      system.length > 0 &&
+      !system.endsWith('\n') &&
+      formatting.instruct.wrap &&
+      !formatting.instruct.story_string_suffix
+    )
+      system += '\n';
+    messages.unshift({ role: 'system', content: system });
+  }
+  const { maxContext, maxResponse } = contextLimits(options);
+  const customStops = (options.stoppingStrings ?? []).filter((s) => s.length > 0).map((s) => substitute(s));
+  const model = modelOf(options);
+
+  if (options.api === 'text') {
+    let prompt = messages.map((m) => m.content).join(isInstruct ? '' : '\n');
+    prompt += isInstruct
+      ? formatInstructPrompt(f, {
+          name: charName,
+          isImpersonate: false,
+          promptBias: prefill,
+          isQuiet: true,
+          isQuietToLoud: Boolean(raw.quietToLoud),
+        })
+      : `\n${prefill}`;
+    // (The instruct stop sequences follow the setting, even when this prompt skips them.)
+    const stoppingStrings = textStoppingStrings(f, formatting.instructEnabled, {
+      isImpersonate: false,
+      continuesUser: false,
+      groupNames,
+      customStops,
+    });
+    const { data, http, stream } = await textRequest(options.text, prompt, {
+      type: 'quiet',
+      maxTokens: maxResponse,
+      maxContext,
+      stoppingStrings,
+      substitute,
+      bannedWords: env.bannedWords,
+    });
+    return { api: 'text', http, data, prompt, stream, stoppingStrings, model };
+  }
+  // With Chat Completion the prefill is an assistant message at the end.
+  if (prefill) messages.push({ role: 'assistant', content: prefill });
+  const stoppingStrings = customStops.filter(Boolean);
+  const request = await chatRequest(options, {
+    messages: messages.map((m) => ({
+      role: m.role,
+      content: m.content,
+      ...(m.name ? { name: m.name } : {}),
+    })),
+    type: 'quiet',
+    names: { charName, userName, groupNames },
+    substitute,
+    stoppingStrings,
+    prefill: true,
+  });
   return {
-    ...common,
     api: 'chat',
+    http: adapterFor(options.connection.provider).buildRequest(request),
     request,
-    http: adapterFor(provider).buildRequest(request),
-    prompt,
     stream: request.stream,
     stoppingStrings,
+    model,
   };
 }
 

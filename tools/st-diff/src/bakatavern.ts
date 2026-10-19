@@ -18,6 +18,7 @@ import {
   normalizeSystemPrompt,
   normalizeTextgenSettings,
   prepareGeneration,
+  prepareRawGeneration,
   RegexPlacement,
   stTokenizerIds,
   textCountTokenizer,
@@ -35,13 +36,21 @@ import {
 
 import { mockModelEntry, mockTokenIds } from '../../mock-llm/src/server.ts';
 import {
+  groupMembers,
   scenarioModel,
   stReasoningDefaults,
   stWorldInfoDefaults,
   type Scenario,
   type StWorldInfoSettings,
 } from './scenarios.ts';
-import { scenarioChat, scenarioPersona, scenarioPreset, scenarioTextSettings, stCard } from './st-data.ts';
+import {
+  scenarioChat,
+  scenarioPersona,
+  scenarioPreset,
+  scenarioTextSettings,
+  stCard,
+  stCardOf,
+} from './st-data.ts';
 
 const MOCK_ORIGIN = 'http://127.0.0.1:5057';
 
@@ -200,9 +209,24 @@ export async function bakaTavernRequest(scenario: Scenario, defaultPreset: Recor
   const wi = scenario.worldInfo;
   const books = (names: readonly string[]): LoadedBook[] =>
     names.map((name) => ({ name, entries: wi?.books[name] ?? [] }));
+  const group = scenario.group
+    ? {
+        members: groupMembers(scenario).map((m) => ({
+          id: m.name,
+          name: m.name,
+          card: stCardOf(scenario, m),
+          muted: scenario.group!.muted?.includes(m.name) ?? false,
+        })),
+        speakerId: scenario.card.name,
+        generationMode: scenario.group.generationMode ?? 0,
+        joinPrefix: scenario.group.joinPrefix ?? '',
+        joinSuffix: scenario.group.joinSuffix ?? '',
+      }
+    : undefined;
   const common = {
-    type: scenario.type,
+    type: scenario.type === 'raw' ? ('quiet' as const) : scenario.type,
     card,
+    group,
     characterKey: scenario.card.name,
     characterTags: [],
     persona,
@@ -231,25 +255,43 @@ export async function bakaTavernRequest(scenario: Scenario, defaultPreset: Recor
       separator: reasoning.separator,
     },
   };
+  const quiet = scenario.quiet
+    ? {
+        quietPrompt: scenario.quiet.prompt,
+        quietToLoud: scenario.quiet.quietToLoud,
+        quietName: scenario.quiet.quietName,
+        forceName2: true,
+      }
+    : {};
   if (scenario.text) {
     const { formatting, text } = await textSetup(scenario, tokenizers.ids);
     const power = scenario.text.power ?? {};
-    const prepared = await prepareGeneration({
+    const options = {
       ...common,
-      api: 'text',
+      ...quiet,
+      api: 'text' as const,
       formatting,
       text,
       promptBias: String(power.user_prompt_bias ?? ''),
       pinExamples: Boolean(power.pin_examples),
-    });
+    };
+    if (scenario.raw) {
+      const prepared = await prepareRawGeneration(options, scenario.raw);
+      return {
+        path: new URL(prepared.http.url).pathname,
+        body: JSON.parse(prepared.http.body!) as Record<string, unknown>,
+      };
+    }
+    const prepared = await prepareGeneration(options);
     return {
       path: new URL(prepared.http.url).pathname,
       body: JSON.parse(prepared.http.body!) as Record<string, unknown>,
     };
   }
   const biasLists = (stPreset.bias_presets ?? {}) as Record<string, { text?: string; value?: number }[]>;
-  const prepared = await prepareGeneration({
+  const chatOptions = {
     ...common,
+    ...quiet,
     preset,
     logitBias: biasLists[String(stPreset.bias_preset_selected)],
     // SillyTavern read the mock's model list.
@@ -275,7 +317,10 @@ export async function bakaTavernRequest(scenario: Scenario, defaultPreset: Recor
             }
           : undefined,
     },
-  });
+  };
+  const prepared = scenario.raw
+    ? await prepareRawGeneration(chatOptions, scenario.raw)
+    : await prepareGeneration(chatOptions);
   return {
     path: new URL(prepared.http.url).pathname,
     body: JSON.parse(prepared.http.body!) as Record<string, unknown>,

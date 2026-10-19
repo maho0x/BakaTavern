@@ -56,3 +56,37 @@ for (const scheme of ['dark', 'light'] as const) {
     await shot('7-regex');
   });
 }
+
+test('group screens', async ({ page, request }, testInfo) => {
+  await useMockConnection(request);
+  const shot = (name: string) =>
+    page.screenshot({ path: `${dir}/${testInfo.project.name}-group-${name}.png` });
+  await page.goto('/');
+  const names = ['Aiko', 'Ren', 'Mei'].map((n) => uniqueName(`${n} group`, testInfo));
+  await importCards(
+    page,
+    names.map((name, i) => ({ name: `member${i}`, card: { v2: v2Card(name) } })),
+  );
+  if ((page.viewportSize()?.width ?? 1280) < 900)
+    await page.getByRole('button', { name: 'Characters' }).first().click();
+  await page.getByRole('button', { name: 'New group' }).click();
+  const editor = page.getByRole('dialog', { name: 'New group' });
+  await editor.getByLabel('Name', { exact: true }).fill(uniqueName('Moonlit regulars', testInfo));
+  for (const name of names) {
+    await editor.getByRole('searchbox', { name: 'Search characters' }).fill(name);
+    await editor.getByRole('button', { name }).click();
+  }
+  await editor.getByRole('searchbox', { name: 'Search characters' }).fill('');
+  await editor.getByLabel('Who replies').selectOption({ label: 'Every member, in order' });
+  await editor.getByLabel('Character cards in the prompt').selectOption({ index: 1 });
+  await shot('1-editor');
+  await editor.getByRole('button', { name: 'Create group' }).click();
+  await mockReply(request, {
+    replies: ['*She slides two cups across.* "Tea for you."', 'Coffee. Black.', '"I saved you a croissant."'],
+  });
+  await send(page, 'Evening, everyone.');
+  await page.getByText('I saved you a croissant').waitFor();
+  await shot('2-chat');
+  await page.getByRole('button', { name: 'Members', exact: true }).click();
+  await shot('3-members');
+});

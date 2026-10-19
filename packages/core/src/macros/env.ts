@@ -4,6 +4,8 @@ export interface VariableScope {
   set(name: string, value: unknown): void;
   has(name: string): boolean;
   delete(name: string): void;
+  /** Every variable (for listing them). */
+  entries?(): [string, unknown][];
 }
 
 /** Variable store over a plain object (e.g. `chat_metadata.variables`). Mutates `target`. */
@@ -17,6 +19,7 @@ export function objectVariables(target: Record<string, unknown>): VariableScope 
     delete: (name) => {
       delete target[name];
     },
+    entries: () => Object.entries(target),
   };
 }
 
@@ -95,7 +98,7 @@ export interface MacroEnv {
   idleDuration?: string;
   isMobile?: boolean;
   /** Extra simple macros (plugins, overrides) resolved by name, before the registered ones. */
-  dynamic?: Readonly<Record<string, string | (() => string)>>;
+  dynamic?: Readonly<Record<string, string | ((args: string[]) => string)>>;
   /** Applied to the output of every macro call (e.g. escaping for a regex). */
   postProcess?: (value: string) => string;
 }

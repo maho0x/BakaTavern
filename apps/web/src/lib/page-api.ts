@@ -1,6 +1,6 @@
 /**
- * What scripts on the page can use: `window.BakaTavern`. Experimental until the plugin API (M3);
- * for now it registers function tools the model may call.
+ * What scripts on the page can use: `window.BakaTavern` (function tools the model may call).
+ * Plugins get more, with permissions, through the plugin API (`plugins/host.svelte.ts`).
  */
 
 import { registerTool, unregisterTool, type RegisteredTool } from './generation/tools.ts';

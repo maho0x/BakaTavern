@@ -1,0 +1,95 @@
+{
+  "scenario": "group-reasoning",
+  "image": "ghcr.io/sillytavern/sillytavern:1.19.0",
+  "recordedAt": "2026-10-19T07:30:33.801Z",
+  "request": {
+    "path": "/v1/chat/completions",
+    "body": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "Write Aiko's next reply in a fictional chat between Aiko and User."
+        },
+        {
+          "role": "system",
+          "content": "Aiko is a cheerful barista at the Moonlit Café. She remembers every regular by name."
+        },
+        {
+          "role": "system",
+          "content": "cheerful, curious, a little nosy"
+        },
+        {
+          "role": "system",
+          "content": "User walks into the café on a rainy evening."
+        },
+        {
+          "role": "system",
+          "content": "[Example Chat]"
+        },
+        {
+          "role": "system",
+          "content": "User: Hi!",
+          "name": "example_user"
+        },
+        {
+          "role": "system",
+          "content": "Aiko: Oh, hello there! The usual?",
+          "name": "example_assistant"
+        },
+        {
+          "role": "system",
+          "content": "[Example Chat]"
+        },
+        {
+          "role": "system",
+          "content": "User: What do you recommend?",
+          "name": "example_user"
+        },
+        {
+          "role": "system",
+          "content": "Aiko: *She taps the menu.* Matcha latte, always.",
+          "name": "example_assistant"
+        },
+        {
+          "role": "system",
+          "content": "[Start a new group chat. Group members: Aiko, Ren, Mei]"
+        },
+        {
+          "role": "assistant",
+          "content": "Aiko: *She looks up from the counter.* Welcome in, User! Rough weather out there?"
+        },
+        {
+          "role": "user",
+          "content": "Evening, everyone."
+        },
+        {
+          "role": "assistant",
+          "content": "Ren: Evening. *He nods at the window.* Some storm."
+        },
+        {
+          "role": "assistant",
+          "content": "Aiko: <think>Serve everyone.</think>\n*She sets down two cups.* Tea for you, espresso for Ren."
+        },
+        {
+          "role": "assistant",
+          "content": "Mei: I saved a croissant for whoever wants it."
+        },
+        {
+          "role": "user",
+          "content": "Aiko, another tea please."
+        },
+        {
+          "role": "system",
+          "content": "[Write the next reply only as Aiko.]"
+        }
+      ],
+      "model": "mock-model",
+      "temperature": 1,
+      "max_tokens": 300,
+      "stream": false,
+      "presence_penalty": 0,
+      "frequency_penalty": 0,
+      "top_p": 1
+    }
+  }
+}

@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Character } from '@bakatavern/api-client';
-  import { cardData, type CardData } from '@bakatavern/core';
+  import { cardData, talkativeness as cardTalkativeness, type CardData } from '@bakatavern/core';
 
   import { api } from '../../api.ts';
   import Avatar from '../../components/Avatar.svelte';
@@ -36,6 +36,9 @@
   function close() {
     ui.editingCharacterId = null;
   }
+
+  /** SillyTavern keeps talkativeness as a string; 0.5 when unset. */
+  const talkativeness = (d: CardData) => cardTalkativeness({ data: d });
 
   async function save() {
     if (!character || !data) return;
@@ -83,12 +86,11 @@
     try {
       await api.deleteCharacter(character.id);
       library.removeCharacter(character.id);
-      if (chat.characterId === character.id) {
-        chat.characterId = null;
-        chat.character = null;
-        chat.chat = null;
-        chat.messages = [];
-      }
+      if (chat.characterId === character.id) chat.close();
+      // Groups lose the member.
+      if (library.groups.some((g) => g.members.some((m) => m.characterId === character!.id)))
+        await library.refreshGroups();
+      if (chat.members.some((m) => m.id === character!.id)) await chat.reloadGroup();
       close();
     } catch (error) {
       ui.toast(errorText(error), 'error');
@@ -237,6 +239,18 @@
             </label>
           </div>
         {/if}
+        <label class="field">
+          <span>{t('char.talkativeness')}: {talkativeness(data).toFixed(2)}</span>
+          <input
+            type="range"
+            min="0"
+            max="1"
+            step="0.05"
+            value={talkativeness(data)}
+            oninput={(e) => (data!.extensions.talkativeness = e.currentTarget.value)}
+          />
+          <small>{t('char.talkativenessHint')}</small>
+        </label>
         <label class="field">
           <span>{t('char.lorebook')}</span>
           <select class="select" bind:value={data.extensions.world}>

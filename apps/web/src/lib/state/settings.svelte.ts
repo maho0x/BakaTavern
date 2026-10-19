@@ -45,6 +45,19 @@ class Settings {
     ns.timer = setTimeout(() => void this.#save(namespace), 400);
   }
 
+  /** Replaces the whole namespace (keys missing from `data` go away) and schedules a save. */
+  replace(namespace: string, data: Record<string, unknown>) {
+    const ns = (this.#ns[namespace] ??= { data: {}, rev: 0 });
+    ns.data = data;
+    clearTimeout(ns.timer);
+    ns.timer = setTimeout(() => void this.#save(namespace), 400);
+  }
+
+  /** Saves every pending change now (the page is being hidden or closed). */
+  flushAll() {
+    return Promise.all(Object.keys(this.#ns).map((namespace) => this.flush(namespace)));
+  }
+
   async flush(namespace: string) {
     const ns = this.#ns[namespace];
     if (!ns?.timer) return;

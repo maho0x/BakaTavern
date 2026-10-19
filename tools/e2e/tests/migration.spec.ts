@@ -59,7 +59,7 @@ test('imports a SillyTavern backup with chats, lorebooks, presets and settings',
   ]);
 
   await page.goto('/');
-  await page.getByRole('region', { name: 'Chat' }).waitFor();
+  await page.getByRole('region', { name: 'Chat', exact: true }).waitFor();
   await openPanel(page, 'Settings');
   await page.locator('input[type=file][accept*=".zip"]').setInputFiles({
     name: 'sillytavern-backup.zip',
@@ -68,7 +68,7 @@ test('imports a SillyTavern backup with chats, lorebooks, presets and settings',
   });
   const report = page.getByRole('status').filter({ hasText: 'Imported' });
   await expect(report).toContainText('Imported 1 characters, 1 chats, 1 lorebooks, 1 presets');
-  await expect(report).toContainText('backgrounds 1');
+  await expect(report).toContainText('1 backgrounds');
   await expect(page.getByText('SillyTavern settings applied.')).toBeVisible();
 
   // The settings arrived: the lorebook is global, the regex script is listed.

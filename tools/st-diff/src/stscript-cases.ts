@@ -1,0 +1,188 @@
+/**
+ * STscript cases run through SillyTavern 1.19 (recorded into `baseline/stscript.json` by
+ * `pnpm record:stscript`) and through BakaTavern's runtime: the pipe, the abort state and the
+ * variables afterwards must match.
+ */
+
+export interface StscriptCase {
+  id: string;
+  script: string;
+  /** Chat and global variables before the script runs. */
+  local?: Record<string, unknown>;
+  global?: Record<string, unknown>;
+}
+
+export const stscriptCases: StscriptCase[] = [
+  // Pipes, quoting and escaping
+  { id: 'pipe-basic', script: '/pass hello | /upper' },
+  { id: 'pipe-macro', script: '/pass a | /pass {{pipe}}b | /pass {{pipe}}c' },
+  { id: 'pipe-no-inject', script: '/pass hello || /pass' },
+  { id: 'pipe-implicit', script: '/pass hello | /pass | /upper' },
+  { id: 'quotes-unnamed', script: '/pass "quoted  text" after' },
+  { id: 'quotes-named', script: '/replace pattern="a b" replacer="x  y" a b a b' },
+  { id: 'escaped-pipe', script: '/pass a \\| b' },
+  { id: 'escaped-braces', script: '/pass \\{: not a closure :\\}' },
+  { id: 'escaped-macro', script: '/pass \\{\\{char\\}\\}' },
+  { id: 'trailing-space', script: '/pass   spaced out   ' },
+  { id: 'multiline', script: '/pass one\ntwo |\n/pass {{pipe}} three' },
+  { id: 'comment-line', script: '/pass 1 | // ignore me | /pass 2' },
+  { id: 'comment-hash', script: '/pass 1 | /# ignore me | /pass {{pipe}}3' },
+  { id: 'comment-block', script: '/pass 1 | /* a block\n | with pipes *| /pass {{pipe}}4' },
+  { id: 'macro-names', script: '/pass {{char}} and {{user}}' },
+  { id: 'macro-pipe-in-braces', script: '/pass {{random::a|a}} done' },
+  { id: 'strict-escaping', script: '/parser-flag STRICT_ESCAPING on | /pass a \\\\| /pass b' },
+  { id: 'strict-escaping-escaped', script: '/parser-flag STRICT_ESCAPING | /pass a \\\\\\| b' },
+  { id: 'strict-quote-pipe', script: '/parser-flag STRICT_ESCAPING | /pass "a | b"' },
+
+  // Variables
+  { id: 'setvar-getvar', script: '/setvar key=x 5 | /getvar x' },
+  { id: 'setvar-pipe', script: '/setvar key=x hello world' },
+  { id: 'addvar-number', script: '/setvar key=n 2 | /addvar key=n 3 | /getvar n' },
+  { id: 'addvar-text', script: '/setvar key=s ab | /addvar key=s cd | /getvar s' },
+  { id: 'addvar-list', script: '/setvar key=l ["a"] | /addvar key=l b | /getvar l' },
+  { id: 'addvar-new', script: '/addvar key=fresh 4 | /getvar fresh' },
+  { id: 'incdec', script: '/incvar c | /incvar c | /decvar c' },
+  {
+    id: 'index-object',
+    script: '/setvar key=obj index=name Aiko | /setvar key=obj index=age as=number 21 | /getvar obj',
+  },
+  { id: 'index-list', script: '/setvar key=arr index=1 b | /getvar arr' },
+  { id: 'index-read', script: '/setvar key=o {"a":{"b":[1,2]}} | /getvar key=o index=a' },
+  {
+    id: 'index-as-types',
+    script:
+      '/setvar key=t index=a as=bool on | /setvar key=t index=b as=list [1] | /setvar key=t index=c as=null x | /getvar t',
+  },
+  {
+    id: 'globalvars',
+    script: '/setglobalvar key=g 1 | /incglobalvar g | /addglobalvar key=g 10 | /getglobalvar g',
+  },
+  { id: 'flushvar', script: '/setvar key=gone 1 | /flushvar gone | /getvar gone' },
+  { id: 'flushvar-missing', script: '/flushvar nothing' },
+  {
+    id: 'existing-vars',
+    script: '/getvar mood | /pass {{pipe}}-{{getglobalvar::theme}}',
+    local: { mood: 'happy' },
+    global: { theme: 'dark' },
+  },
+  { id: 'macro-setvar', script: '/pass {{setvar::m::7}}x | /pass {{pipe}}{{getvar::m}}' },
+  { id: 'numeric-string', script: '/setvar key=z 007 | /getvar z' },
+  { id: 'empty-string', script: '/setvar key=e "" | /getvar e' },
+  { id: 'listvar-object', script: '/setvar key=a 1 | /setglobalvar key=b 2 | /listvar return=object' },
+  { id: 'listvar-pipe', script: '/setvar key=a 1 | /listvar scope=local return=pipe' },
+
+  // Scoped variables and closures
+  { id: 'let-var', script: '/let a 1 | /var a 2 | /var a' },
+  { id: 'let-key', script: '/let key=k some value here | /var k' },
+  { id: 'let-empty', script: '/let x | /var x' },
+  { id: 'let-twice', script: '/let a 1 | /let a 2' },
+  { id: 'var-missing', script: '/var nothing' },
+  { id: 'var-index', script: '/let o {"a":1} | /var key=o index=b 2 | /var o' },
+  { id: 'var-macro', script: '/let name Aiko | /pass hi {{var::name}}' },
+  { id: 'var-macro-index', script: '/let list ["a","b","c"] | /pass {{var::list::2}}' },
+  {
+    id: 'closure-scope',
+    script: '/let x outer | /run {: /let x inner | /pass {{var::x}} :} | /pass {{pipe}}/{{var::x}}',
+  },
+  { id: 'closure-parent-var', script: '/let x 1 | /run {: /var x 2 :} | /var x' },
+  { id: 'closure-immediate', script: '/pass {: /pass inner :}() | /pass got {{pipe}}' },
+  { id: 'closure-args', script: '/let f {: a=1 b=2 /pass {{var::a}}+{{var::b}} :} | /run b=5 f' },
+  { id: 'closure-arg-closure', script: '/let f {: x={: /pass default :} /run x :} | /run f' },
+  { id: 'closure-stored', script: '/let f {: /pass called :} | /run f | /run f' },
+  { id: 'closure-not-callable', script: '/let f text | /run f' },
+  { id: 'closure-pipe-in', script: '/pass outer | /run {: /pass {{pipe}}! :}' },
+  { id: 'closure-empty', script: '/pass x | /run {: :}' },
+  { id: 'closure-nested', script: '/run {: /run {: /pass deep :} | /pass {{pipe}}er :}' },
+  { id: 'closure-serialize', script: '/closure-serialize {: /pass x | /upper :}' },
+  { id: 'closure-deserialize', script: '/closure-deserialize /pass y | /run' },
+  { id: 'closure-as-pipe', script: '/pass {: /pass x :}' },
+  { id: 'break-closure', script: '/run {: /pass a | /break | /pass b :} | /pass {{pipe}}!' },
+  { id: 'break-value', script: '/run {: /break stopped | /pass later :}' },
+  { id: 'break-root', script: '/pass a | /break | /pass b' },
+
+  // Flow control
+  { id: 'if-true', script: '/if left=1 rule=lt right=2 {: /pass yes :}' },
+  { id: 'if-else', script: '/if left=x rule=eq right=y else={: /pass no :} {: /pass yes :}' },
+  { id: 'if-text-command', script: '/if left=abc rule=in right=b "/pass found"' },
+  { id: 'if-truthy', script: '/if left=on {: /pass on :}' },
+  { id: 'if-not', script: '/if left=0 rule=not {: /pass falsy :}' },
+  { id: 'if-variable', script: '/setvar key=hp 3 | /if left=hp rule=gt right=1 {: /pass alive :}' },
+  { id: 'if-string-compare', script: '/if left=Apple rule=eq right=apple {: /pass same :}' },
+  { id: 'if-number-in', script: '/if left=12345 rule=in right=34 {: /pass in :}' },
+  { id: 'if-no-match', script: '/pass before | /if left=1 right=2 {: /pass yes :}' },
+  { id: 'if-bad-rule', script: '/if left=1 right=2 rule=wat {: /pass yes :}' },
+  { id: 'times-closure', script: '/times 3 {: /addvar key=c 1 :} | /getvar c' },
+  { id: 'times-index', script: '/times 4 {: /addvar key=s {{timesIndex}} :} | /getvar s' },
+  { id: 'times-text', script: '/times 2 /addvar key=t x | /getvar t' },
+  { id: 'times-guard', script: '/times 150 {: /incvar g :} | /getvar g' },
+  { id: 'times-break', script: '/times 10 {: /incvar t | /if left=t rule=gte right=3 {: /break done :} :}' },
+  { id: 'while-loop', script: '/setvar key=i 0 | /while left=i rule=lt right=5 {: /incvar i :} | /getvar i' },
+  {
+    id: 'while-guard',
+    script: '/setvar key=w 0 | /while left=w rule=gte right=0 {: /incvar w :} | /getvar w',
+  },
+  {
+    id: 'while-guard-off',
+    script: '/setvar key=w 0 | /while guard=off left=w rule=lt right=150 {: /incvar w :} | /getvar w',
+  },
+  { id: 'abort', script: '/pass 1 | /abort | /pass 2' },
+  { id: 'abort-loud', script: '/pass 1 | /abort quiet=false why not | /pass 2' },
+  { id: 'abort-nested', script: '/run {: /abort :} | /pass after' },
+
+  // Math
+  { id: 'math-add', script: '/add 1 2 3' },
+  { id: 'math-add-list', script: '/add [1, 2, 3.5]' },
+  { id: 'math-add-vars', script: '/setvar key=a 4 | /setglobalvar key=b 5 | /add a b 1' },
+  { id: 'math-sub', script: '/sub 10 3 2' },
+  { id: 'math-mul', script: '/mul 2 3 4' },
+  { id: 'math-div', script: '/div 10 4' },
+  { id: 'math-div-zero', script: '/div 1 0' },
+  { id: 'math-mod', script: '/mod 10 3' },
+  { id: 'math-pow', script: '/pow 2 10' },
+  { id: 'math-minmax', script: '/max 1 9 3 | /pass {{pipe}} | /min 4 -2 7' },
+  { id: 'math-unary', script: '/sqrt 16 | /abs -3 | /round 2.5' },
+  { id: 'math-trig', script: '/sin 0 | /cos 0 | /log 1' },
+  { id: 'math-nan', script: '/add foo bar' },
+  { id: 'math-empty', script: '/add' },
+  { id: 'math-pipe', script: '/pass 5 | /mul {{pipe}} 3' },
+  { id: 'rand-fixed', script: '/rand from=3 to=3' },
+  { id: 'rand-round', script: '/rand from=2 to=2.4 round=floor' },
+
+  // Text and lists
+  { id: 'len-text', script: '/len hello' },
+  { id: 'len-list', script: '/len ["a","b"]' },
+  { id: 'len-object', script: '/len {"a":1,"b":2,"c":3}' },
+  { id: 'len-number', script: '/len 12345' },
+  { id: 'sort-list', script: '/sort [3,"b",1,"a",2]' },
+  { id: 'sort-object', script: '/sort {"b":1,"a":2}' },
+  { id: 'sort-values', script: '/sort keysort=false {"b":1,"a":2}' },
+  { id: 'sort-invalid', script: '/sort not json' },
+  { id: 'upper-lower', script: '/upper mixed Case | /lower' },
+  { id: 'substr', script: '/substr start=1 end=3 hello | /pass {{pipe}}-' },
+  { id: 'substr-start', script: '/substr start=-2 hello' },
+  { id: 'replace-literal', script: '/replace pattern=na replacer=NA banana' },
+  { id: 'replace-regex', script: '/replace mode=regex pattern=/a/g replacer=o banana' },
+  {
+    id: 'replace-regex-groups',
+    script: '/replace mode=regex pattern="/(\\w+) (\\w+)/" replacer="$2 $1" hello world',
+  },
+  { id: 'test-regex', script: '/test pattern=/^b/i Banana' },
+  { id: 'match-groups', script: '/match pattern=/(a)(n)/ banana' },
+  { id: 'match-global', script: '/match pattern=/an/g banana' },
+  { id: 'match-none', script: '/match pattern=/x/ banana' },
+  { id: 'trimstart', script: '/trimstart Hi. There you are.' },
+  { id: 'trimend', script: '/trimend One sentence. And a half' },
+  { id: 'array-wrap', script: '/array-wrap foo | /pass {{pipe}} | /array-wrap ["x"]' },
+  { id: 'array-wrap-object', script: '/array-wrap {"a":1}' },
+  { id: 'array-wrap-number', script: '/array-wrap 5 | /pass {{pipe}} | /array-wrap stringify=false 5' },
+  { id: 'array-unwrap', script: '/array-unwrap ["x","y"] | /pass {{pipe}} | /array-unwrap [{"a":1}]' },
+  { id: 'array-unwrap-other', script: '/array-unwrap plain' },
+  { id: 'fuzzy-first', script: '/fuzzy list=["a","bana","nope"] banana' },
+  { id: 'fuzzy-best', script: '/fuzzy list=["apple","banana","bandana"] mode=best banan' },
+  { id: 'fuzzy-var', script: '/setvar key=opts ["red","green"] | /fuzzy list=opts gren' },
+  { id: 'fuzzy-threshold', script: '/fuzzy list=["xyz"] threshold=0.1 xya' },
+  { id: 'pass-list', script: '/pass [1,2]' },
+  { id: 'return-alias', script: '/return done' },
+  { id: 'delay', script: '/delay 10 | /pass waited' },
+  { id: 'unknown-command', script: '/pass 1 | /not-a-command' },
+];

@@ -19,17 +19,21 @@ import {
   modelsRequest,
   parseModels,
   prepareGeneration,
+  prepareRawGeneration,
   RegexPlacement,
   textgenAdapter,
   type ChatCompletionPreset,
   type FormattingSettings,
   type GenerationOutput,
   type GenerationType,
+  type GroupPromptContext,
   type PersonaInfo,
   type ModelInfo,
   type ModelListEntry,
   type PreparedGeneration,
+  type PreparedRawGeneration,
   type PrepareOptions,
+  type RawPromptOptions,
   type PromptItemization,
   type Tokenizer,
   type ToolDefinition,
@@ -58,6 +62,8 @@ import {
 } from '../state/prefs.ts';
 import { settings } from '../state/settings.svelte.ts';
 import { loadBooks } from './books.ts';
+import { messagesForPrompt } from './hooks.ts';
+import { collectInjections } from './injections.ts';
 import { browserAttachments } from './attachments.ts';
 import { idTokenizerFor, tokenizerFor } from './tokenizers.ts';
 
@@ -87,6 +93,12 @@ export interface JobMeta {
   continuePostfix?: string;
   /** Strings that end the reply (they are cut off if the backend sends them). */
   stoppingStrings?: string[];
+  /** Group chats: the member replying, the batch of replies it belongs to, every member's name. */
+  characterId?: string;
+  groupGenId?: number;
+  groupNames?: string[];
+  /** `/ask`: the answering character's avatar file (SillyTavern `force_avatar`). */
+  forceAvatar?: string;
 }
 
 export interface ActiveChatConnection {
@@ -269,6 +281,8 @@ export interface GenerationInput {
   type: GenerationType;
   character: Character;
   persona: Persona | undefined;
+  /** The user's name when it is not the persona's (`/persona-set mode=temp`). */
+  userName?: string;
   chat: Chat;
   /** Chat metadata to use (mutated with World Info timers and variables). */
   metadata: Record<string, unknown>;
@@ -280,12 +294,44 @@ export interface GenerationInput {
   /** Function tools to offer (Chat Completion), and the tool rounds so far. */
   tools?: ToolDefinition[];
   toolDepth?: number;
+  /** A group chat: the members, with `character` replying. */
+  group?: GroupPromptContext;
+  /** A background instruction (`/gen`, plugins): what it asks, in character or as the system. */
+  quiet?: { prompt: string; toLoud?: boolean; name?: string };
+  /** Reply length for this generation only (tokens). */
+  responseLength?: number;
+  /** More strings that end the reply (`/gen stop=`). */
+  extraStops?: readonly string[];
+  /** Global variables macros may change (saved by the caller). */
+  globalVariables?: Record<string, unknown>;
 }
 
 export async function prepare(
   input: GenerationInput,
   connection: ActiveConnection,
 ): Promise<PreparedGeneration> {
+  // Plugins may change the messages the prompt is built from.
+  const messages = await messagesForPrompt(input.type, input.messages);
+  const { options, tokenizer } = await generationOptions({ ...input, messages }, connection);
+  const prepared = await prepareGeneration(options);
+  preparedWith.set(prepared, { options, tokenizer });
+  return prepared;
+}
+
+/** A generation from a prompt given directly, with the chat's settings (`/genraw`, plugins). */
+export async function prepareRaw(
+  input: GenerationInput,
+  connection: ActiveConnection,
+  raw: RawPromptOptions,
+): Promise<PreparedRawGeneration> {
+  const { options } = await generationOptions(input, connection);
+  return prepareRawGeneration(options, raw);
+}
+
+async function generationOptions(
+  input: GenerationInput,
+  connection: ActiveConnection,
+): Promise<{ options: PrepareOptions; tokenizer: Tokenizer }> {
   const card = input.character.card as { data?: { extensions?: { world?: string } } };
   const wiPrefs = settings.get('worldinfo', worldInfoDefaults);
   const notePrefs = settings.get('note', noteDefaults);
@@ -305,8 +351,9 @@ export async function prepare(
     card: input.character.card,
     characterKey: characterKey(input.character),
     characterTags: input.character.tags,
-    persona: personaInfo(input.persona),
+    persona: { ...personaInfo(input.persona), ...(input.userName ? { name: input.userName } : {}) },
     chatId: input.chat.id,
+    group: input.group,
     chatMetadata: input.metadata,
     messages: storedMessages(input.messages),
     worldInfo: {
@@ -317,13 +364,19 @@ export async function prepare(
       persona: personaBooks[0] ?? null,
     },
     authorsNote: { allowWIScan: notePrefs.allowWIScan, characterNote: note },
-    globalVariables: settings.get('variables', {}) as Record<string, unknown>,
+    globalVariables: input.globalVariables ?? (settings.get('variables', {}) as Record<string, unknown>),
     tokenizer,
     macros,
     formatting,
-    quietPrompt: input.quietPrompt,
+    // Scripts' and plugins' injections (`/inject`, extensions).
+    extraInjections: await collectInjections({ metadata: input.metadata, type: input.type }),
+    quietPrompt: input.quiet?.prompt ?? input.quietPrompt,
+    quietToLoud: input.quiet?.toLoud,
+    quietName: input.quiet?.name,
+    // Background generations name the character (SillyTavern `generateQuietPrompt`).
+    forceName2: input.quiet ? true : undefined,
     promptBias: chatPrefs.promptBias,
-    stoppingStrings: chatPrefs.stoppingStrings,
+    stoppingStrings: [...chatPrefs.stoppingStrings, ...(input.extraStops ?? [])],
     regexScripts: input.regexScripts,
     reasoning: {
       addToPrompts: chatPrefs.reasoningAddToPrompts,
@@ -348,13 +401,14 @@ export async function prepare(
       text: {
         settings: await activeTextSettings(connection),
         maxContext: connection.prefs.maxContext,
-        maxResponse: connection.prefs.maxResponse,
+        maxResponse: input.responseLength || connection.prefs.maxResponse,
         secretId: connection.secretId,
         idTokenizer: idTokenizerFor(connection),
       },
     };
   } else {
     const preset = await activePreset();
+    if (input.responseLength) preset.openai_max_tokens = input.responseLength;
     const biasLists = settings.get('logitbias', logitBiasDefaults).lists;
     const logitBias = preset.bias_preset_selected
       ? biasLists[String(preset.bias_preset_selected)]
@@ -378,9 +432,7 @@ export async function prepare(
       toolDepth: input.toolDepth,
     };
   }
-  const prepared = await prepareGeneration(options);
-  preparedWith.set(prepared, { options, tokenizer });
-  return prepared;
+  return { options, tokenizer };
 }
 
 /** Model list entries by provider and address, fetched once per session when needed. */
@@ -465,6 +517,8 @@ export function finalizeOutput(
   meta: JobMeta,
   stoppingStrings: readonly string[],
   regex: (text: string, placement: number) => string = (text) => text,
+  /** Raw generations (`generateRaw`) keep the prompt bias out and may keep names and fragments. */
+  options: { promptBias?: boolean; trimNames?: boolean; trimSentences?: boolean } = {},
 ) {
   const chatPrefs = settings.get('chat', chatDefaults);
   let text = output.text;
@@ -487,14 +541,15 @@ export function finalizeOutput(
     stoppingStrings,
     applyRegex: (message) =>
       regex(message, impersonate ? RegexPlacement.USER_INPUT : RegexPlacement.AI_OUTPUT),
-    wrongName: impersonate ? meta.charName : meta.personaName,
-    charName: meta.charName,
-    ownName: impersonate ? meta.personaName : meta.charName,
+    wrongName: options.trimNames === false ? undefined : impersonate ? meta.charName : meta.personaName,
+    charName: options.trimNames === false ? undefined : meta.charName,
+    ownName: options.trimNames === false ? undefined : impersonate ? meta.personaName : meta.charName,
     collapseNewlines: formatting.collapseNewlines,
     instruct: meta.api === 'text' && formatting.instructEnabled ? formatting.instruct : undefined,
-    trimSentences: formatting.context.trim_sentences,
+    trimSentences: options.trimSentences ?? formatting.context.trim_sentences,
+    groupNames: meta.groupNames,
     promptBias:
-      meta.type === 'continue' || impersonate
+      meta.type === 'continue' || impersonate || options.promptBias === false
         ? undefined
         : macros.evaluate(chatPrefs.promptBias, { user: meta.personaName, char: meta.charName }),
   });
@@ -523,16 +578,50 @@ export function swipeInfo(meta: JobMeta, reasoning: string, finishedAt = new Dat
 
 export function newAssistantMessage(meta: JobMeta, text: string, reasoning: string): NewMessage {
   const info = swipeInfo(meta, reasoning);
+  // Group replies of one round share an id (SillyTavern regenerates them together).
+  if (meta.groupGenId) info.extra.gen_id = meta.groupGenId;
   return {
     role: 'assistant',
     name: meta.charName,
+    characterId: meta.characterId,
     swipes: [{ content: text, info }],
     sendDate: info.send_date,
     extra: info.extra,
-    data: { gen_started: info.gen_started, gen_finished: info.gen_finished },
+    data: {
+      gen_started: info.gen_started,
+      gen_finished: info.gen_finished,
+      ...(meta.forceAvatar
+        ? {
+            force_avatar: `/thumbnail?type=avatar&file=${encodeURIComponent(meta.forceAvatar)}`,
+            original_avatar: meta.forceAvatar,
+          }
+        : {}),
+    },
   };
 }
 
 export function isFinished(job: JobInfo) {
   return job.status !== 'running';
+}
+
+/** A user message that is only part of one prompt (TavernHelper's `generate` input). */
+export function unsentUserMessage(chatId: string, name: string, text: string, seq: number): Message {
+  const now = Date.now();
+  return {
+    id: 'unsent',
+    chatId,
+    seq,
+    role: 'user',
+    name,
+    characterId: null,
+    hidden: false,
+    swipeId: 0,
+    swipes: [{ content: text, info: {} }],
+    sendDate: new Date(now).toISOString(),
+    extra: {},
+    data: {},
+    createdAt: now,
+    updatedAt: now,
+    rev: 0,
+  };
 }

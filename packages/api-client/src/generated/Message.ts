@@ -7,6 +7,10 @@ export type Message = { id: string, chatId: string, seq: number,
  */
 role: string, name: string, 
 /**
+ * The group member who wrote it (SillyTavern `original_avatar`).
+ */
+characterId: string | null, 
+/**
  * Excluded from prompts (SillyTavern `is_system`).
  */
 hidden: boolean, swipeId: number, swipes: Array<Swipe>, sendDate: string, 

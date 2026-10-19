@@ -1,7 +1,7 @@
 //! Moving a SillyTavern user directory (or its backup zip) into BakaTavern.
 //!
-//! Files with formats this crate knows become BakaTavern data: character cards, chats,
-//! lorebooks, presets, personas and tags, and (only when asked) API keys. SillyTavern's
+//! Files with formats this crate knows become BakaTavern data: character cards, chats, groups
+//! and their chats, lorebooks, presets, personas and tags, and (only when asked) API keys. SillyTavern's
 //! `settings.json` is kept as a settings document for the web app, which maps it onto its own
 //! settings: that mapping is domain knowledge and lives in TypeScript.
 //!
@@ -13,7 +13,9 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use bt_formats::worldinfo;
-use bt_store::repo::{characters, chats, lorebooks, personas, presets, secrets, settings, tags};
+use bt_store::repo::{
+    characters, chats, groups, lorebooks, personas, presets, secrets, settings, tags,
+};
 use serde::Serialize;
 use serde_json::{Value, json};
 use ts_rs::TS;
@@ -38,15 +40,17 @@ const PRESET_DIRS: &[(&str, &str)] = &[
     ("context", "context"),
     ("sysprompt", "sysprompt"),
     ("reasoning", "reasoning"),
+    ("QuickReplies", "qr"),
+    ("themes", "theme"),
+];
+
+/// Picture and video files SillyTavern shows as chat backgrounds.
+const BACKGROUND_EXTENSIONS: &[&str] = &[
+    "png", "jpg", "jpeg", "webp", "gif", "bmp", "avif", "mp4", "webm",
 ];
 
 /// Folders whose contents BakaTavern cannot use yet; they are counted in the report.
 const LATER_DIRS: &[(&str, &str)] = &[
-    ("groups", "groups"),
-    ("group chats", "groupChats"),
-    ("backgrounds", "backgrounds"),
-    ("themes", "themes"),
-    ("QuickReplies", "quickReplies"),
     ("movingUI", "movingUi"),
     ("user/files", "dataBankFiles"),
     ("assets", "assets"),
@@ -76,6 +80,8 @@ const NON_MODEL_KEYS: &[&str] = &[
 #[ts(export)]
 pub struct StImportReport {
     pub characters: u32,
+    pub groups: u32,
+    /// Character and group chats.
     pub chats: u32,
     pub lorebooks: u32,
     pub presets: u32,
@@ -83,6 +89,8 @@ pub struct StImportReport {
     pub secrets: u32,
     /// Images and files attached to chat messages.
     pub attachments: u32,
+    /// Chat backgrounds.
+    pub backgrounds: u32,
     /// Items already here from an earlier import, left as they are.
     pub unchanged: u32,
     /// What BakaTavern cannot use yet, by kind (group chats, backgrounds, ...).
@@ -310,7 +318,9 @@ impl Importer<'_> {
                 let taken = self
                     .state
                     .db
-                    .read(move |c| chats::unique_title(c, &user_id, Some(&id), &t).map(|u| u != t))
+                    .read(move |c| {
+                        chats::unique_title(c, &user_id, Some(&id), None, &t).map(|u| u != t)
+                    })
                     .await;
                 if matches!(taken, Ok(true)) {
                     self.report.unchanged += 1;
@@ -334,7 +344,10 @@ impl Importer<'_> {
                 match chat_routes::import_parsed(
                     self.state,
                     self.user_id,
-                    Some(character_id.clone()),
+                    chat_routes::ChatOwner {
+                        character_id: Some(character_id.clone()),
+                        group_id: None,
+                    },
                     title,
                     parsed,
                 )
@@ -344,6 +357,268 @@ impl Importer<'_> {
                     Err(e) => self.fail(&path, e.message),
                 }
             }
+        }
+    }
+
+    /// `groups/<id>.json` with their chats from `group chats/`, by SillyTavern group id → group id.
+    async fn groups(
+        &mut self,
+        settings: Option<&Value>,
+        by_avatar: &HashMap<String, String>,
+    ) -> HashMap<String, String> {
+        let mut by_st_id = HashMap::new();
+        let mut used_chats = std::collections::HashSet::new();
+        for path in files_in(&self.root.join("groups"), &["json"]) {
+            let json = match tokio::fs::read(&path)
+                .await
+                .map_err(anyhow::Error::from)
+                .and_then(|b| Ok(serde_json::from_slice::<Value>(&b)?))
+            {
+                Ok(v) if v.is_object() => v,
+                Ok(_) => {
+                    self.fail(&path, "not a JSON object");
+                    continue;
+                }
+                Err(e) => {
+                    self.fail(&path, e);
+                    continue;
+                }
+            };
+            let st_id = match json.get("id") {
+                Some(Value::String(s)) => s.clone(),
+                Some(Value::Number(n)) => n.to_string(),
+                _ => stem(&path),
+            };
+            let strings = |key: &str| -> Vec<String> {
+                json.get(key)
+                    .and_then(Value::as_array)
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| match v {
+                                Value::String(s) => Some(s.clone()),
+                                Value::Number(n) => Some(n.to_string()),
+                                _ => None,
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            };
+            let chat_ids = strings("chats");
+            used_chats.extend(chat_ids.iter().cloned());
+            let (user_id, lookup) = (self.user_id.to_string(), st_id.clone());
+            let existing = self
+                .state
+                .db
+                .read(move |c| groups::find_by_source_id(c, &user_id, &lookup))
+                .await
+                .ok()
+                .flatten();
+            let group_id = match existing {
+                Some(id) => {
+                    self.report.unchanged += 1;
+                    id
+                }
+                None => match self
+                    .create_group(&path, &json, &st_id, settings, by_avatar)
+                    .await
+                {
+                    Some(id) => id,
+                    None => continue,
+                },
+            };
+            by_st_id.insert(st_id, group_id.clone());
+            for chat_id in chat_ids {
+                self.group_chat(&group_id, &chat_id).await;
+            }
+        }
+        let orphans = files_in(&self.root.join("group chats"), &["jsonl"])
+            .iter()
+            .filter(|p| !used_chats.contains(&stem(p)))
+            .count() as u32;
+        if orphans > 0 {
+            *self
+                .report
+                .skipped
+                .entry("chatsWithoutGroup".into())
+                .or_default() += orphans;
+        }
+        by_st_id
+    }
+
+    async fn create_group(
+        &mut self,
+        path: &Path,
+        json: &Value,
+        st_id: &str,
+        settings: Option<&Value>,
+        by_avatar: &HashMap<String, String>,
+    ) -> Option<String> {
+        let list = |key: &str| -> Vec<String> {
+            json.get(key)
+                .and_then(Value::as_array)
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|v| v.as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        let disabled = list("disabled_members");
+        let members: Vec<groups::GroupMember> = list("members")
+            .iter()
+            .filter_map(|avatar| {
+                Some(groups::GroupMember {
+                    character_id: by_avatar.get(avatar)?.clone(),
+                    muted: disabled.contains(avatar),
+                })
+            })
+            .collect();
+        // A custom avatar is a data URL or a file under `user/images`.
+        let avatar = match json.get("avatar_url").and_then(Value::as_str) {
+            Some(url) if url.starts_with("data:") => {
+                url.split_once(";base64,").and_then(|(_, data)| {
+                    base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data).ok()
+                })
+            }
+            Some(url) if url.trim_start_matches('/').starts_with("user/") => {
+                tokio::fs::read(self.root.join(url.trim_start_matches('/')))
+                    .await
+                    .ok()
+            }
+            _ => None,
+        };
+        let avatar = match avatar {
+            Some(bytes) => store_file(self.state, bytes).await.ok().map(|f| f.hash),
+            None => None,
+        };
+        let tag_ids: Vec<String> = settings
+            .and_then(|s| {
+                s.pointer(&format!(
+                    "/tag_map/{}",
+                    st_id.replace('~', "~0").replace('/', "~1")
+                ))
+            })
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let st_tag_names: HashMap<String, String> = settings
+            .and_then(|s| s.get("tags"))
+            .and_then(Value::as_array)
+            .map(|tags| {
+                tags.iter()
+                    .filter_map(|t| {
+                        let id = match t.get("id")? {
+                            Value::String(s) => s.clone(),
+                            other => other.to_string(),
+                        };
+                        Some((id, t.get("name")?.as_str()?.trim().to_string()))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let tag_names: Vec<String> = tag_ids
+            .iter()
+            .filter_map(|id| st_tag_names.get(id).cloned())
+            .filter(|n| !n.is_empty())
+            .collect();
+        let new = groups::NewGroup {
+            name: json
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|n| !n.trim().is_empty())
+                .unwrap_or("Group")
+                .to_string(),
+            avatar,
+            fav: matches!(json.get("fav"), Some(Value::Bool(true)))
+                || json.get("fav").and_then(Value::as_str) == Some("true"),
+            members,
+            settings: json.clone(),
+            source_id: Some(st_id.to_string()),
+            created_at: None,
+        };
+        let user_id = self.user_id.to_string();
+        let created = self
+            .state
+            .db
+            .write(move |c| {
+                let tx = c.transaction()?;
+                let group = groups::create(&tx, &user_id, new)?;
+                let mut ids = Vec::new();
+                for name in &tag_names {
+                    ids.push(tags::ensure(&tx, &user_id, name)?.id);
+                }
+                tags::set_entity_tags(&tx, groups::ENTITY, &group.id, &ids)?;
+                tx.commit()?;
+                Ok(group.id)
+            })
+            .await;
+        match created {
+            Ok(id) => {
+                self.report.groups += 1;
+                Some(id)
+            }
+            Err(e) => {
+                self.fail(path, ApiError::from(e).message);
+                None
+            }
+        }
+    }
+
+    /// `group chats/<chat id>.jsonl` into a group (unless it already has a chat by that name).
+    async fn group_chat(&mut self, group_id: &str, chat_id: &str) {
+        let path = self
+            .root
+            .join("group chats")
+            .join(format!("{chat_id}.jsonl"));
+        let (user_id, id, t) = (
+            self.user_id.to_string(),
+            group_id.to_string(),
+            chat_id.to_string(),
+        );
+        let taken = self
+            .state
+            .db
+            .read(move |c| chats::unique_title(c, &user_id, None, Some(&id), &t).map(|u| u != t))
+            .await;
+        if matches!(taken, Ok(true)) {
+            self.report.unchanged += 1;
+            return;
+        }
+        let text = match tokio::fs::read_to_string(&path).await {
+            Ok(t) => t,
+            // SillyTavern lists chats it never saved (a new chat nobody wrote in).
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+            Err(e) => {
+                self.fail(&path, e);
+                return;
+            }
+        };
+        let mut parsed = match bt_formats::chat::parse_jsonl(&text) {
+            Ok(p) => p,
+            Err(e) => {
+                self.fail(&path, ApiError::from(e).message);
+                return;
+            }
+        };
+        self.localize_attachments(&mut parsed).await;
+        match chat_routes::import_parsed(
+            self.state,
+            self.user_id,
+            chat_routes::ChatOwner {
+                character_id: None,
+                group_id: Some(group_id.to_string()),
+            },
+            chat_id.to_string(),
+            parsed,
+        )
+        .await
+        {
+            Ok(_) => self.report.chats += 1,
+            Err(e) => self.fail(&path, e.message),
         }
     }
 
@@ -485,6 +760,32 @@ impl Importer<'_> {
             }
         }
         by_key
+    }
+
+    /// Chat backgrounds (`backgrounds/`): stored files, listed by their SillyTavern file name.
+    async fn backgrounds(&mut self) -> Vec<Value> {
+        let mut out = Vec::new();
+        for path in files_in(&self.root.join("backgrounds"), BACKGROUND_EXTENSIONS) {
+            let name = path
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let stored = match tokio::fs::read(&path).await {
+                Ok(bytes) => store_file(self.state, bytes).await,
+                Err(e) => {
+                    self.fail(&path, e);
+                    continue;
+                }
+            };
+            match stored {
+                Ok(record) => {
+                    self.report.backgrounds += 1;
+                    out.push(json!({ "name": name, "hash": record.hash }));
+                }
+                Err(e) => self.fail(&path, e.message),
+            }
+        }
+        out
     }
 
     /// Personas from `power_user` with avatars from `User Avatars`, by avatar file → persona id.
@@ -782,6 +1083,9 @@ pub async fn import(
 
     let characters_by_avatar = importer.characters().await;
     importer.chats(&characters_by_avatar).await;
+    let groups_by_id = importer
+        .groups(settings_json.as_ref(), &characters_by_avatar)
+        .await;
     let lorebooks_by_name = importer.lorebooks().await;
     let presets_by_key = importer.presets().await;
     let empty = Value::Null;
@@ -796,16 +1100,19 @@ pub async fn import(
     } else {
         Vec::new()
     };
+    let backgrounds = importer.backgrounds().await;
     importer.count_later();
 
     if let Some(settings_json) = settings_json {
         let stash = json!({
             "settings": settings_json,
             "characters": characters_by_avatar,
+            "groups": groups_by_id,
             "personas": personas_by_avatar,
             "lorebooks": lorebooks_by_name,
             "presets": presets_by_key,
             "secrets": imported_secrets,
+            "backgrounds": backgrounds,
             "importedAt": bt_store::util::now_ms(),
         });
         let user_id = user_id.to_string();
@@ -828,6 +1135,7 @@ pub async fn import(
 pub fn notify_imported(state: &AppState, user_id: &str, origin: &Option<String>) {
     for kind in [
         "character",
+        "group",
         "lorebook",
         "preset",
         "persona",

@@ -35,6 +35,8 @@ pub struct Message {
     /// `user` | `assistant` | `system`
     pub role: String,
     pub name: String,
+    /// The group member who wrote it (SillyTavern `original_avatar`).
+    pub character_id: Option<String>,
     /// Excluded from prompts (SillyTavern `is_system`).
     pub hidden: bool,
     pub swipe_id: i64,
@@ -57,6 +59,8 @@ pub struct Message {
 pub struct NewMessage {
     pub role: String,
     pub name: String,
+    /// The group member writing it.
+    pub character_id: Option<String>,
     pub hidden: Option<bool>,
     pub swipe_id: Option<i64>,
     pub swipes: Vec<Swipe>,
@@ -88,7 +92,7 @@ const SELECT: &str =
     "SELECT m.id, m.chat_id, m.seq, m.role, m.name, m.hidden, m.swipe_id, m.send_date, m.extra,
     m.data, m.created_at, m.updated_at, m.rev,
     (SELECT json_group_array(json_object('content', s.content, 'info', json(s.info)) ORDER BY s.idx)
-       FROM swipes s WHERE s.message_id = m.id)
+       FROM swipes s WHERE s.message_id = m.id), m.character_id
     FROM messages m";
 
 fn from_row(row: &Row<'_>) -> rusqlite::Result<Message> {
@@ -110,6 +114,7 @@ fn from_row(row: &Row<'_>) -> rusqlite::Result<Message> {
         created_at: row.get(10)?,
         updated_at: row.get(11)?,
         rev: row.get(12)?,
+        character_id: row.get(14)?,
         swipes,
     })
 }
@@ -235,8 +240,10 @@ pub fn insert(
     let mut ids = Vec::with_capacity(messages.len());
     let mut stmt = conn.prepare_cached(
         "INSERT INTO messages (id, chat_id, seq, role, name, hidden, swipe_id, send_date, extra, data, created_at,
-             updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+             updated_at, character_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
+             (SELECT c.id FROM characters c JOIN chats ch ON ch.user_id = c.user_id
+              WHERE ch.id = ?2 AND c.id = ?13))",
     )?;
     for (i, msg) in messages.iter().enumerate() {
         validate_role(&msg.role)?;
@@ -260,7 +267,8 @@ pub fn insert(
             object(&msg.extra),
             object(&msg.data),
             msg.created_at.unwrap_or(now),
-            now
+            now,
+            msg.character_id
         ])?;
         write_swipes(conn, &id, &swipes)?;
         ids.push(id);
@@ -384,6 +392,7 @@ mod tests {
         NewMessage {
             role: role.into(),
             name: role.into(),
+            character_id: None,
             hidden: None,
             swipe_id: None,
             swipes: vec![Swipe {

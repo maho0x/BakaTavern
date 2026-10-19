@@ -3,6 +3,7 @@ import { ApiError } from '@bakatavern/api-client';
 import { loadStDefaultPreset, loadStTemplates } from '@bakatavern/core';
 
 import { api } from '../api.ts';
+import { events, eventTypes } from '../events.ts';
 import { t } from '../i18n/index.svelte.ts';
 import { applyStImport } from '../migration/apply.ts';
 import { chat } from './chat.svelte.ts';
@@ -29,6 +30,7 @@ class Session {
       this.version = data.version;
       settings.load(data.settings);
       library.characters = data.characters;
+      library.groups = data.groups;
       library.personas = data.personas;
       library.tags = data.tags;
       library.lorebooks = data.lorebooks;
@@ -40,6 +42,7 @@ class Session {
       await seedPresets();
       await applyPendingImport();
       await chat.restoreLast();
+      await events.emit(eventTypes.APP_READY);
     } catch (error) {
       if (error instanceof ApiError && error.status === 401) {
         this.status = 'login';
@@ -72,6 +75,7 @@ class Session {
     }
     settings.sync(data.settings);
     library.characters = data.characters;
+    library.groups = data.groups;
     library.personas = data.personas;
     library.tags = data.tags;
     library.lorebooks = data.lorebooks;
@@ -94,6 +98,12 @@ class Session {
       case 'character':
         await library.refreshCharacters();
         if (event.id === chat.characterId && event.action === 'updated') await chat.reloadCharacter();
+        if (chat.members.some((m) => m.id === event.id)) await chat.reloadGroup();
+        break;
+      case 'group':
+        await library.refreshGroups();
+        if (event.id === chat.groupId && event.action === 'updated') await chat.reloadGroup();
+        if (event.id === chat.groupId && event.action === 'deleted') chat.close();
         break;
       case 'persona':
         await library.refreshPersonas();
@@ -172,6 +182,8 @@ if (typeof window !== 'undefined') {
   // A phone that slept or lost its connection may have missed a reply finishing on the server.
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && session.status === 'ready') void chat.recoverJobs();
+    // Changes waiting for their save go now: the page may not come back.
+    if (document.visibilityState === 'hidden') void settings.flushAll();
   });
   window.addEventListener('online', () => void session.refresh());
 }

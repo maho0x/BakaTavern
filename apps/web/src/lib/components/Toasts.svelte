@@ -1,19 +1,24 @@
 <script lang="ts">
   import { t } from '../i18n/index.svelte.ts';
-  import { ui } from '../state/ui.svelte.ts';
+  import { sanitizeHtml } from '../render/markdown.ts';
+  import { ui, type Toast } from '../state/ui.svelte.ts';
   import Icon from './Icon.svelte';
+
+  function tap(toast: Toast) {
+    ui.dismiss(toast.id);
+    toast.onclick?.();
+  }
 </script>
 
 <div class="toasts" role="status" aria-live="polite">
   {#each ui.toasts as toast (toast.id)}
     <!-- A tap anywhere dismisses it, as in SillyTavern, so it never stands in the way for long. -->
-    <button
-      type="button"
-      class="toast {toast.kind}"
-      title={t('common.dismiss')}
-      onclick={() => ui.dismiss(toast.id)}
-    >
-      <span>{toast.text}</span>
+    <button type="button" class="toast {toast.kind}" title={t('common.dismiss')} onclick={() => tap(toast)}>
+      <span class="body">
+        {#if toast.title}<strong class="title">{toast.title}</strong>{/if}
+        <!-- eslint-disable-next-line svelte/no-at-html-tags -- sanitized with DOMPurify -->
+        {#if toast.html}<span>{@html sanitizeHtml(toast.text)}</span>{:else}<span>{toast.text}</span>{/if}
+      </span>
       <Icon name="close" size={14} />
     </button>
   {/each}
@@ -52,8 +57,14 @@
     cursor: pointer;
     box-shadow: 0 8px 30px rgb(0 0 0 / 25%);
   }
-  .toast span {
+  .body {
     flex: 1;
+    display: grid;
+    gap: 0.15rem;
+    overflow-wrap: anywhere;
+  }
+  .title {
+    font-weight: 650;
   }
   .toast :global(svg) {
     flex: none;
@@ -62,5 +73,8 @@
   }
   .toast.error {
     border-inline-start-color: var(--bt-danger);
+  }
+  .toast.warning {
+    border-inline-start-color: var(--bt-dialogue);
   }
 </style>

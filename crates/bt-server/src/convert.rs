@@ -15,6 +15,7 @@ pub fn st_to_new_message(m: StMessage) -> NewMessage {
     NewMessage {
         role: m.role,
         name: m.name,
+        character_id: None,
         hidden: Some(m.hidden),
         swipe_id: Some(m.swipe_id as i64),
         swipes,

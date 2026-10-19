@@ -19,8 +19,8 @@ import { loadStTemplates, type StTemplates } from '@bakatavern/core';
 import { chromium, type Page } from '@playwright/test';
 
 import { tokenizePaths, type RecordedRequest } from '../../mock-llm/src/server.ts';
-import { interceptedHosts, scenarioModel, scenarios, type Scenario } from './scenarios.ts';
-import { scenarioChat, writeStData } from './st-data.ts';
+import { groupMembers, interceptedHosts, scenarioModel, scenarios, type Scenario } from './scenarios.ts';
+import { GROUP_ID, scenarioChat, writeStData } from './st-data.ts';
 
 export const ST_IMAGE = process.env.ST_IMAGE ?? 'ghcr.io/sillytavern/sillytavern:1.19.0';
 const MOCK_IMAGE = process.env.MOCK_IMAGE ?? 'node:22-alpine';
@@ -40,7 +40,7 @@ interface StContext {
   eventSource: { on(event: string, listener: () => void): void };
   eventTypes: { APP_READY: string } & Record<string, string>;
   selectCharacterById(id: number): Promise<void>;
-  generate(type: string): Promise<unknown>;
+  generate(type: string, options?: { force_chid?: number }): Promise<unknown>;
   registerFunctionTool(tool: Record<string, unknown>): void;
 }
 
@@ -137,19 +137,56 @@ async function startMockHost(root: string) {
 }
 
 async function trigger(page: Page, scenario: Scenario) {
+  if (scenario.type === 'quiet' || scenario.type === 'raw') {
+    // Not awaited: the reply arrives through the mock.
+    await page.evaluate(
+      ({ quiet, raw }) => {
+        const ctx = window.SillyTavern!.getContext() as unknown as Record<
+          string,
+          (o: unknown) => Promise<unknown>
+        >;
+        if (quiet)
+          void ctx.generateQuietPrompt!({
+            quietPrompt: quiet.prompt,
+            quietToLoud: quiet.quietToLoud,
+            quietName: quiet.quietName,
+          });
+        else void ctx.generateRaw!(raw);
+      },
+      { quiet: scenario.quiet, raw: scenario.raw },
+    );
+    return;
+  }
+  if (scenario.group) {
+    // The scenario's card replies, whatever the activation strategy would pick.
+    if (scenario.type === 'normal') await fillInput(page, scenario.input ?? '');
+    await page.evaluate(
+      ({ type, avatar }) => {
+        const ctx = window.SillyTavern!.getContext();
+        const force_chid = ctx.characters.findIndex((c) => c.avatar === avatar);
+        void ctx.generate(type, { force_chid });
+      },
+      { type: scenario.type, avatar: `${scenario.card.name}.png` },
+    );
+    return;
+  }
   if (scenario.type === 'normal') {
-    // SillyTavern resets the input box asynchronously after opening a chat: fill it until it sticks.
-    const input = page.locator('#send_textarea');
-    for (let i = 0; i < 20 && (await input.inputValue()) !== scenario.input; i++) {
-      await input.fill(scenario.input ?? '');
-      await sleep(250);
-    }
-    if ((await input.inputValue()) !== scenario.input) throw new Error('could not fill the input box');
+    await fillInput(page, scenario.input ?? '');
     await page.locator('#send_but').click();
   } else {
     // Not awaited: the reply arrives through the mock, and saving it is not part of the test.
     await page.evaluate((type) => void window.SillyTavern!.getContext().generate(type), scenario.type);
   }
+}
+
+/** SillyTavern resets the input box asynchronously after opening a chat: fill it until it sticks. */
+async function fillInput(page: Page, text: string) {
+  const input = page.locator('#send_textarea');
+  for (let i = 0; i < 20 && (await input.inputValue()) !== text; i++) {
+    await input.fill(text);
+    await sleep(250);
+  }
+  if ((await input.inputValue()) !== text) throw new Error('could not fill the input box');
 }
 
 async function recordScenario(
@@ -198,9 +235,13 @@ async function recordScenario(
       page.on('console', (m) => console.log(`  [console] ${m.type()} ${m.text().slice(0, 300)}`));
     await page.goto(`http://127.0.0.1:${ST_PORT}/`);
     const avatar = `${scenario.card.name}.png`;
+    const avatars = groupMembers(scenario).map((m) => `${m.name}.png`);
     await page.waitForFunction(
-      (avatar) => window.SillyTavern?.getContext?.().characters?.some((c) => c.avatar === avatar),
-      avatar,
+      (avatars) =>
+        avatars.every((avatar) =>
+          window.SillyTavern?.getContext?.().characters?.some((c) => c.avatar === avatar),
+        ),
+      avatars,
       { timeout: 60_000 },
     );
     // Extensions (Author's Note, ...) hook into chat changes during startup: wait until it ends.
@@ -214,11 +255,19 @@ async function recordScenario(
     );
     // A popup (a question SillyTavern asks) would keep this from finishing.
     await withTimeout(
-      'opening the character',
-      page.evaluate(async (avatar) => {
-        const ctx = window.SillyTavern!.getContext();
-        await ctx.selectCharacterById(ctx.characters.findIndex((c) => c.avatar === avatar));
-      }, avatar),
+      'opening the chat',
+      scenario.group
+        ? page.evaluate(async (id) => {
+            // The page's own module instance (the context has no way to select a group).
+            const groups = (await import(/* @vite-ignore */ `${location.origin}/scripts/group-chats.js`)) as {
+              openGroupById(id: string): Promise<boolean>;
+            };
+            await groups.openGroupById(id);
+          }, GROUP_ID)
+        : page.evaluate(async (avatar) => {
+            const ctx = window.SillyTavern!.getContext();
+            await ctx.selectCharacterById(ctx.characters.findIndex((c) => c.avatar === avatar));
+          }, avatar),
     );
     const expected = scenarioChat(scenario).length;
     await page.waitForFunction((n) => window.SillyTavern!.getContext().chat.length === n, expected, {

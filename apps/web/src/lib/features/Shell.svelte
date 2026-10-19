@@ -1,11 +1,21 @@
 <script lang="ts">
+  import { onMount, untrack } from 'svelte';
+
   import Icon from '../components/Icon.svelte';
   import { t } from '../i18n/index.svelte.ts';
+  import { chat } from '../state/chat.svelte.ts';
   import { library } from '../state/library.svelte.ts';
   import { connectionDefaults } from '../state/prefs.ts';
   import { regex } from '../state/regex.svelte.ts';
   import { settings } from '../state/settings.svelte.ts';
   import { ui } from '../state/ui.svelte.ts';
+  import { plugins } from '../plugins/host.svelte.ts';
+  import { quickReplies } from '../quickreplies/store.svelte.ts';
+  import ScriptDialog from '../stscript/ScriptDialog.svelte';
+  import { bridge } from '../th/bridge.svelte.ts';
+  import ScriptFrames from '../th/ScriptFrames.svelte';
+  import { helperScripts } from '../th/scripts.svelte.ts';
+  import '../stscript/setup.ts';
   import ChatPane from './chat/ChatPane.svelte';
   import LibraryRail from './library/LibraryRail.svelte';
   import SidePanel from './panels/SidePanel.svelte';
@@ -16,6 +26,31 @@
     void settings.get('connection', connectionDefaults).presetId;
     void library.presets.map((p) => p.rev);
     void regex.syncPreset();
+  });
+
+  onMount(() => void plugins.startAll());
+
+  // Front-end pages and scripts see the chat as it changes.
+  $effect(() => {
+    if (!bridge.frames) return;
+    // Read for its dependencies; what is sent is built when it goes.
+    void bridge.state();
+    untrack(() => bridge.scheduleState());
+  });
+  $effect(() => {
+    void settings.get('connection', connectionDefaults).presetId;
+    void library.presets.map((p) => p.rev);
+    void helperScripts.syncPreset();
+  });
+  $effect(() => {
+    if (chat.characterId) untrack(() => helperScripts.checkCharacter());
+  });
+
+  // Quick Reply sets follow the presets they are stored as.
+  $effect(() => {
+    void library.presets.map((p) => p.rev);
+    // load() reads the loaded sets; only the preset list should rerun it.
+    untrack(() => void quickReplies.load());
   });
 </script>
 
@@ -57,6 +92,16 @@
 {/if}
 
 <!-- The editors and dialogs load when first opened. -->
+<ScriptDialog />
+<ScriptFrames />
+<svelte:window onresize={() => bridge.host.setViewport(window.innerHeight)} />
+
+{#if ui.searchOpen}
+  {#await import('./library/SearchDialog.svelte') then { default: SearchDialog }}<SearchDialog
+      open
+      onclose={() => (ui.searchOpen = false)}
+    />{/await}
+{/if}
 {#if ui.urlImportOpen}
   {#await import('./library/UrlImportDialog.svelte') then { default: UrlImportDialog }}<UrlImportDialog
       open
@@ -66,6 +111,9 @@
 {#if ui.editingCharacterId}
   {#await import('./character/CharacterEditor.svelte') then { default: CharacterEditor }}<CharacterEditor
     />{/await}
+{/if}
+{#if ui.editingGroupId}
+  {#await import('./group/GroupEditor.svelte') then { default: GroupEditor }}<GroupEditor />{/await}
 {/if}
 {#if ui.editingLorebookId}
   {#await import('./worldinfo/LorebookEditor.svelte') then { default: LorebookEditor }}<LorebookEditor

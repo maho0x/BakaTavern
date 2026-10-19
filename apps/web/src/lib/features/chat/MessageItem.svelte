@@ -1,18 +1,22 @@
 <script lang="ts">
   import type { Message } from '@bakatavern/api-client';
   import { messageAttachments, RegexPlacement } from '@bakatavern/core';
+  import { splitFrontend } from '@bakatavern/th-bridge';
 
   import Avatar from '../../components/Avatar.svelte';
   import Icon from '../../components/Icon.svelte';
   import { activeConnection } from '../../generation/pipeline.ts';
   import { tokenizerFor } from '../../generation/tokenizers.ts';
   import { t } from '../../i18n/index.svelte.ts';
+  import { pluginExtensions } from '../../plugins/extensions.svelte.ts';
   import { renderMessage } from '../../render/markdown.ts';
   import { chat } from '../../state/chat.svelte.ts';
   import { library } from '../../state/library.svelte.ts';
   import { uiDefaults } from '../../state/prefs.ts';
   import { settings } from '../../state/settings.svelte.ts';
   import { errorText, ui } from '../../state/ui.svelte.ts';
+  import FrontendFrame from '../../th/FrontendFrame.svelte';
+  import { helperScripts } from '../../th/scripts.svelte.ts';
   import { copyText } from '../../util/clipboard.ts';
 
   interface Props {
@@ -26,7 +30,9 @@
 
   const prefs = $derived(settings.get('ui', uiDefaults));
   const role = $derived(message?.role ?? 'assistant');
-  const name = $derived(message?.name ?? chat.character?.name ?? '');
+  // A new reply being written in a group belongs to the member replying.
+  const speaker = $derived(message ? undefined : chat.generation?.speaker);
+  const name = $derived(message?.name ?? speaker?.name ?? chat.character?.name ?? '');
   const swipe = $derived(message ? message.swipes[message.swipeId] : undefined);
   const baseText = $derived(swipe?.content ?? '');
   const extra = $derived((swipe?.info.extra as Record<string, unknown> | undefined) ?? message?.extra ?? {});
@@ -71,17 +77,41 @@
   );
   /** A record of tool calls (SillyTavern `extra.isSmallSys`): our own HTML, shown small. */
   const smallSys = $derived(Boolean((message?.extra as { isSmallSys?: unknown } | undefined)?.isSmallSys));
-  const html = $derived(
-    renderMessage(shownText, { html: prefs.renderHtml || smallSys, externalMedia: prefs.externalMedia }),
-  );
+  /**
+   * Front-end code blocks become pages once the message is written (TavernHelper's rendering),
+   * after scripts have handled its arrival.
+   */
+  const parts = $derived.by(() => {
+    const pages = message && !streaming && helperScripts.prefs.enabled;
+    const waiting = !!message && chat.receiving === message.id;
+    const split = pages ? splitFrontend(shownText) : [{ kind: 'text' as const, text: shownText }];
+    let page = 0;
+    type Part = { kind: 'frontend'; code: string; page: number } | { kind: 'text'; html: string };
+    return split.flatMap((part): Part[] => {
+      if (part.kind === 'frontend') {
+        return waiting ? [] : [{ kind: 'frontend' as const, code: part.code, page: page++ }];
+      }
+      const html = renderMessage(part.text, {
+        html: prefs.renderHtml || smallSys,
+        externalMedia: prefs.externalMedia,
+      });
+      return [{ kind: 'text' as const, html }];
+    });
+  });
   const reasoningHtml = $derived(renderMessage(shownReasoning, { html: false, externalMedia: false }));
   const avatarHash = $derived.by(() => {
-    if (role === 'assistant') return chat.character?.avatar ?? null;
+    if (role === 'assistant') {
+      if (message?.characterId) return library.character(message.characterId)?.avatar ?? null;
+      if (speaker) return speaker.avatar;
+      // Older group messages without a recorded author: by name.
+      if (chat.group) return chat.members.find((m) => m.name === name)?.avatar ?? null;
+      return chat.character?.avatar ?? null;
+    }
     if (role === 'user')
       return (library.personas.find((p) => p.name === name) ?? chat.persona)?.avatar ?? null;
     return null;
   });
-  const showSwipes = $derived(!!message && isLast && role === 'assistant' && !chat.generation);
+  const showSwipes = $derived(!!message && isLast && role === 'assistant' && !chat.busy);
   const time = $derived(message ? new Date(message.createdAt).toLocaleString() : '');
 
   let editing = $state(false);
@@ -236,6 +266,11 @@
                   ? t('chat.unhide')
                   : t('chat.hide')}
               </button>
+              {#each pluginExtensions.messageActions as action (action.key)}
+                <button role="menuitem" onclick={() => act(async () => action.onClick(index))}
+                  ><Icon name="puzzle" size={15} />{action.label}</button
+                >
+              {/each}
               <button
                 role="menuitem"
                 class="danger"
@@ -277,8 +312,14 @@
       </div>
     {:else}
       <div class="prose" class:streaming={!!streaming}>
-        <!-- eslint-disable-next-line svelte/no-at-html-tags -- renderMessage sanitizes with DOMPurify -->
-        {@html html}{#if streaming}<span class="caret" aria-hidden="true"></span>{/if}
+        {#each parts as part, i (i)}
+          {#if part.kind === 'frontend'}
+            <FrontendFrame code={part.code} messageIndex={index} part={part.page} />
+          {:else}
+            <!-- eslint-disable-next-line svelte/no-at-html-tags -- renderMessage sanitizes with DOMPurify -->
+            {@html part.html}
+          {/if}
+        {/each}{#if streaming}<span class="caret" aria-hidden="true"></span>{/if}
       </div>
     {/if}
 
@@ -348,6 +389,11 @@
 </article>
 
 <style>
+  :global(article.message.found) {
+    outline: 2px solid var(--bt-accent);
+    outline-offset: 2px;
+    border-radius: var(--bt-radius-sm);
+  }
   .message {
     display: grid;
     grid-template-columns: 48px 1fr;
@@ -535,6 +581,9 @@
   }
   .prose :global(em) {
     color: var(--bt-action);
+  }
+  .prose :global(u) {
+    text-decoration-color: var(--bt-underline, currentColor);
   }
   .prose :global(q) {
     color: var(--bt-dialogue);

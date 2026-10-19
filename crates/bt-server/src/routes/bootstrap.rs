@@ -2,6 +2,7 @@ use axum::extract::State;
 use axum::{Json, Router, routing};
 use bt_store::repo::characters::{self, CharacterSummary};
 use bt_store::repo::chats::{self, Chat};
+use bt_store::repo::groups::{self, Group};
 use bt_store::repo::jobs::{self, JobInfo};
 use bt_store::repo::lorebooks::{self, LorebookInfo};
 use bt_store::repo::personas::{self, Persona};
@@ -38,6 +39,7 @@ pub struct Bootstrap {
     pub auth_required: bool,
     pub settings: Vec<SettingsDoc>,
     pub characters: Vec<CharacterSummary>,
+    pub groups: Vec<Group>,
     pub personas: Vec<Persona>,
     pub tags: Vec<Tag>,
     pub lorebooks: Vec<LorebookInfo>,
@@ -59,6 +61,7 @@ async fn bootstrap(State(state): State<AppState>, user: CurrentUser) -> ApiResul
                 auth_required,
                 settings: settings::list(c, id)?,
                 characters: characters::list(c, id)?,
+                groups: groups::list(c, id)?,
                 personas: personas::list(c, id)?,
                 tags: tags::list(c, id)?,
                 lorebooks: lorebooks::list(c, id)?,

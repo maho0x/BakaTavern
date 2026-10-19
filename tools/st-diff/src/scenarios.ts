@@ -15,7 +15,7 @@ import {
   type WorldInfoEntry,
 } from '@bakatavern/core';
 
-export type ScenarioType = 'normal' | 'continue' | 'impersonate' | 'swipe';
+export type ScenarioType = 'normal' | 'continue' | 'impersonate' | 'swipe' | 'quiet' | 'raw';
 
 /** Character card fields (`data` of a V2 card). */
 export interface CardFields {
@@ -44,6 +44,28 @@ export interface ScenarioMessage {
   reasoning?: string;
   /** Other `extra` fields (attachments: `media`, `files`, ...). */
   extra?: Record<string, unknown>;
+}
+
+/** A group chat: the scenario's `card` replies, the other members are listed here. */
+export interface ScenarioGroup {
+  members: CardFields[];
+  /** Where the replying card stands among the members (0 = first). */
+  speakerIndex?: number;
+  /** Names of muted members. */
+  muted?: string[];
+  /** SillyTavern `generation_mode`: 0 swap, 1 append, 2 append with muted members. */
+  generationMode?: number;
+  joinPrefix?: string;
+  joinSuffix?: string;
+}
+
+/** Every member of a group scenario, in group order. */
+export function groupMembers(scenario: Scenario): CardFields[] {
+  const group = scenario.group;
+  if (!group) return [scenario.card];
+  const members = [...group.members];
+  members.splice(group.speakerIndex ?? 0, 0, scenario.card);
+  return members;
 }
 
 export interface PersonaFields {
@@ -175,6 +197,18 @@ export interface Scenario {
   /** Defaults to `custom`. */
   provider?: ScenarioProvider;
   card: CardFields;
+  /** A group chat with the card as the member who replies. */
+  group?: ScenarioGroup;
+  /** `quiet`: a background generation (SillyTavern `generateQuietPrompt`). */
+  quiet?: { prompt: string; quietToLoud?: boolean; quietName?: string };
+  /** `raw`: a prompt given directly (SillyTavern `generateRaw`). */
+  raw?: {
+    prompt: string | { role: 'user' | 'assistant' | 'system'; content: string; name?: string }[];
+    systemPrompt?: string;
+    prefill?: string;
+    instructOverride?: boolean;
+    quietToLoud?: boolean;
+  };
   /** Chat after the greeting (the card's `first_mes`, when it has one). */
   history: ScenarioMessage[];
   /** Text typed into the input box before a normal generation. */
@@ -1353,6 +1387,8 @@ export const scenarios: Scenario[] = [
   },
   ...providerScenarios(),
   ...textScenarios(),
+  ...groupScenarios(),
+  ...quietAndRawScenarios(),
   {
     id: 'custom-body-headers',
     title: 'Custom source: extra body fields with macros, removed keys, extra headers',
@@ -1887,5 +1923,198 @@ function textScenarios(): Scenario[] {
         overrides: { names_as_stop_strings: false, use_stop_strings: true, always_force_name2: false },
       },
     }),
+  ];
+}
+
+/** Group chats: the replying member's prompt with the others' cards, names and notes. */
+function groupScenarios(): Scenario[] {
+  const ren: CardFields = {
+    name: 'Ren',
+    description: '{{char}} fixes motorbikes two streets away and drops by for espresso.',
+    personality: 'gruff, kind-hearted',
+    scenario: '{{char}} is drying his jacket by the heater.',
+    mes_example: '<START>\n{{user}}: Busy day?\n{{char}}: Three bikes and a scooter. *He grins.*',
+    extensions: { depth_prompt: { prompt: '{{char}} speaks in short sentences.', depth: 2, role: 'system' } },
+  };
+  const mei: CardFields = {
+    name: 'Mei',
+    description: '{{char}} bakes the croissants for the café.',
+    personality: 'shy, precise',
+    mes_example: '{{user}}: Smells great.\n{{char}}: The dough needs another hour.',
+    extensions: {
+      depth_prompt: { prompt: '{{char}} is tired from the night shift.', depth: 1, role: 'user' },
+    },
+  };
+  // Group greetings are stored with their macros expanded (SillyTavern expands an unexpanded
+  // `{{char}}` in the first message to nothing when a group chat opens).
+  const aikoMember: CardFields = { ...aiko, first_mes: '' };
+  const groupHistory: ScenarioMessage[] = [
+    { name: 'Aiko', mes: '*She looks up from the counter.* Welcome in, User! Rough weather out there?' },
+    { user: true, mes: 'Evening, everyone.' },
+    { name: 'Ren', mes: 'Evening. *He nods at the window.* Some storm.', reasoning: 'Keep it short.' },
+    {
+      name: 'Aiko',
+      mes: '*She sets down two cups.* Tea for you, espresso for Ren.',
+      reasoning: 'Serve everyone.',
+    },
+    { name: 'Mei', mes: 'I saved a croissant for whoever wants it.', reasoning: 'Be generous.' },
+  ];
+  const membersPrompt =
+    "Write {{char}}'s next reply in a group chat with {{user}}. Members: {{group}}. Unmuted: {{groupNotMuted}}. Others: {{notChar}}. {{charIfNotGroup}}.";
+  const join = { joinPrefix: '[<FIELDNAME> of {{char}}]\n', joinSuffix: '\n[/{{char}}]' };
+  const base = { history: groupHistory, input: 'Ren, how is the bike?', type: 'normal' as const };
+  return [
+    {
+      id: 'group-swap',
+      title: "Group, swap mode: the speaker's card, member names on messages, group macros and nudge",
+      card: ren,
+      group: { members: [aikoMember, mei], speakerIndex: 1 },
+      mainPrompt: membersPrompt,
+      ...base,
+    },
+    {
+      id: 'group-append',
+      title: 'Group, join cards: prefix and suffix with <FIELDNAME>, every unmuted member’s depth prompt',
+      card: aikoMember,
+      group: { members: [ren, mei], muted: ['Mei'], generationMode: 1, ...join },
+      persona: { description: '{{user}} is a night-shift nurse.' },
+      mainPrompt: membersPrompt,
+      ...base,
+    },
+    {
+      id: 'group-append-muted',
+      title: 'Group, join cards including muted members, scenario and examples overridden by the chat',
+      card: ren,
+      group: { members: [aikoMember, mei], speakerIndex: 2, muted: ['Mei'], generationMode: 2, ...join },
+      chatMetadata: { scenario: '{{char}} and friends are snowed in.' },
+      ...base,
+    },
+    {
+      id: 'group-reasoning',
+      title: 'Group: only the speaker’s own past reasoning goes into the prompt',
+      card: aikoMember,
+      group: { members: [ren, mei] },
+      reasoning: { add_to_prompts: true, max_additions: 3 },
+      ...base,
+      input: 'Aiko, another tea please.',
+    },
+    {
+      id: 'group-impersonate',
+      title: 'Group: write the user’s reply (no group nudge)',
+      card: mei,
+      group: { members: [aikoMember, ren], speakerIndex: 2 },
+      history: groupHistory,
+      type: 'impersonate',
+    },
+    {
+      id: 'group-swipe',
+      title: 'Group: swipe the last member’s reply',
+      card: mei,
+      group: { members: [aikoMember, ren], speakerIndex: 2, generationMode: 1 },
+      history: groupHistory,
+      type: 'swipe',
+    },
+    {
+      id: 'group-claude',
+      title: 'Group on Claude: member names stay in the content',
+      provider: 'claude',
+      card: ren,
+      group: { members: [aikoMember, mei], speakerIndex: 1 },
+      ...base,
+    },
+    {
+      id: 'tc-group-chatml',
+      title: 'Text Completion group: ChatML with names forced for groups, member stop strings',
+      text: {
+        type: 'ooba',
+        instruct: { name: 'ChatML', overrides: { names_behavior: 'force' } },
+        context: { name: 'ChatML' },
+      },
+      card: ren,
+      group: { members: [aikoMember, mei], speakerIndex: 1 },
+      ...base,
+    },
+    {
+      id: 'tc-group-plain',
+      title: 'Text Completion group without instruct mode: joined cards and examples, member stop strings',
+      text: { type: 'ooba' },
+      card: aikoMember,
+      group: { members: [ren, mei], generationMode: 1, ...join },
+      ...base,
+    },
+    {
+      id: 'tc-group-continue',
+      title: 'Text Completion group: continue the last member’s reply (Alpaca)',
+      text: { type: 'ooba', instruct: { name: 'Alpaca' }, context: { name: 'Alpaca' } },
+      card: mei,
+      group: { members: [aikoMember, ren], speakerIndex: 2 },
+      history: groupHistory,
+      type: 'continue',
+    },
+  ];
+}
+
+/** Generations outside the chat flow: quiet prompts and raw prompts (scripts and plugins use them). */
+function quietAndRawScenarios(): Scenario[] {
+  const chatml = { type: 'ooba', instruct: { name: 'ChatML' }, context: { name: 'ChatML' } };
+  const summarize = { prompt: 'Summarize the chat so far in one sentence.' };
+  const messages = [
+    { role: 'user' as const, content: 'Name three teas, {{user}}.' },
+    { role: 'assistant' as const, content: 'Green, black and oolong.' },
+    { role: 'user' as const, content: 'Which one does {{char}} like?', name: 'Guest' },
+  ];
+  return [
+    {
+      id: 'quiet',
+      title: 'Quiet prompt: a background instruction at the end',
+      card: aiko,
+      history,
+      type: 'quiet',
+      quiet: summarize,
+    },
+    {
+      id: 'tc-quiet',
+      title: 'Text Completion quiet prompt in instruct mode',
+      text: chatml,
+      card: aiko,
+      history,
+      type: 'quiet',
+      quiet: summarize,
+    },
+    {
+      id: 'tc-quiet-loud',
+      title: 'Text Completion quiet prompt answered in character',
+      text: { type: 'ooba' },
+      card: aiko,
+      history,
+      type: 'quiet',
+      quiet: { prompt: 'Say goodnight.', quietToLoud: true },
+    },
+    {
+      id: 'raw',
+      title: 'Raw prompt: messages, system prompt and prefill as given',
+      card: aiko,
+      history,
+      type: 'raw',
+      raw: { prompt: messages, systemPrompt: 'You are {{char}}. Be brief.', prefill: 'Well,' },
+    },
+    {
+      id: 'tc-raw',
+      title: 'Text Completion raw prompt in instruct mode',
+      text: chatml,
+      card: aiko,
+      history,
+      type: 'raw',
+      raw: { prompt: messages, systemPrompt: 'You are {{char}}.', prefill: 'Hmm,' },
+    },
+    {
+      id: 'tc-raw-plain',
+      title: 'Text Completion raw text prompt without instruct formatting',
+      text: chatml,
+      card: aiko,
+      history,
+      type: 'raw',
+      raw: { prompt: 'Write a haiku about rain.', instructOverride: true },
+    },
   ];
 }

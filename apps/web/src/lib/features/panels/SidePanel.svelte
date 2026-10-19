@@ -19,6 +19,9 @@
     persona: () => import('./PersonaPanel.svelte'),
     worldinfo: () => import('./WorldInfoPanel.svelte'),
     regex: () => import('./RegexPanel.svelte'),
+    quickreplies: () => import('../../quickreplies/QuickReplyPanel.svelte'),
+    frontend: () => import('../../th/FrontendPanel.svelte'),
+    plugins: () => import('../../plugins/PluginsPanel.svelte'),
     settings: () => import('./SettingsPanel.svelte'),
   };
   const shown = $derived(ui.panel === 'preset' && textApi ? 'textPreset' : ui.panel);

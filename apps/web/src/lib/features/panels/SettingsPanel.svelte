@@ -12,7 +12,9 @@
     formattingDefaults,
     logitBiasDefaults,
     noteDefaults,
+    backgroundDefaults,
     personaDefaults,
+    quickReplyDefaults,
     regexDefaults,
     uiDefaults,
     worldInfoDefaults,
@@ -22,6 +24,7 @@
   import { applyPendingImport, session } from '../../state/session.svelte.ts';
   import { settings } from '../../state/settings.svelte.ts';
   import { errorText, ui } from '../../state/ui.svelte.ts';
+  import ThemePicker from './ThemePicker.svelte';
 
   const prefs = $derived(settings.get('ui', uiDefaults));
   const chatPrefs = $derived(settings.get('chat', chatDefaults));
@@ -70,6 +73,7 @@
         template('sysprompt', formatting.syspromptId, 'Neutral - Chat'),
         template('textgen', connection.text?.presetId, 'Default'),
       ]);
+      const background = { ...backgroundDefaults, ...settings.get('backgrounds', backgroundDefaults) };
       const stSettings = toStSettings({
         formatting,
         logitbias: settings.get('logitbias', logitBiasDefaults),
@@ -83,11 +87,14 @@
         persona: settings.get('persona', personaDefaults),
         regex: settings.get('regex', regexDefaults),
         variables: settings.get('variables', {}) as Record<string, unknown>,
+        quickReply: { ...quickReplyDefaults, ...settings.get('quickReply', quickReplyDefaults) },
+        background,
+        themeName: prefs.themeName ?? null,
         presetNames: Object.fromEntries(
           library.presets.filter((p) => p.kind === 'openai').map((p) => [p.id, p.name]),
         ),
       });
-      const blob = await api.exportSillyTavern(stSettings);
+      const blob = await api.exportSillyTavern(stSettings, background.items);
       const a = Object.assign(document.createElement('a'), {
         href: URL.createObjectURL(blob),
         download: 'sillytavern-data.zip',
@@ -137,6 +144,7 @@
         <option value="day">{t('settings.themeDay')}</option>
       </select>
     </label>
+    <ThemePicker />
     <label class="field">
       <span>{t('settings.textSize', { value: Math.round(prefs.textScale * 100) })}</span>
       <input
@@ -334,6 +342,7 @@
             presets: report.presets,
             personas: report.personas,
             attachments: report.attachments,
+            backgrounds: report.backgrounds,
             secrets: report.secrets,
           })}
         </p>

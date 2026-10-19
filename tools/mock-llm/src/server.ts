@@ -15,6 +15,8 @@ export interface MockOptions {
   delayMs?: number;
   /** Reply text; defaults to echoing the last user message. Can be changed with POST /__reply. */
   reply?: string;
+  /** Replies for the next requests, one each, before `reply` applies again. */
+  replies?: string[];
   reasoning?: string;
   /**
    * OpenAI-compatible chats: call this tool (when tools are offered) until the request carries a
@@ -182,7 +184,7 @@ export function createMockServer(options: MockOptions = {}): {
     if (req.method !== 'POST' || !body)
       return send(404, { error: { message: `no mock for ${req.method} ${url.pathname}` } });
 
-    const text = state.reply ?? `Echo: ${lastUserText(body)}`;
+    const text = state.replies?.shift() ?? state.reply ?? `Echo: ${lastUserText(body)}`;
     const reasoning = state.reasoning ?? '';
     const stream = Boolean(body.stream) || url.pathname.includes('streamGenerateContent');
     const write = async (chunk: string) => {

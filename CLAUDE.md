@@ -1,6 +1,6 @@
 # BakaTavern: notes for contributors and coding agents
 
-BakaTavern rewrites SillyTavern (ST) as a Rust server plus a Svelte 5 web app, keeping ST's behavior and data formats. The reference is **SillyTavern 1.19.0**. Milestones (see the roadmap in `README.zh-CN.md`): M1, the chat MVP, is done; M2, prompt-engine parity (Text Completion, regex, full World Info editor, tokenizers, attachments, tool calling, whole-directory migration), is done but for a few providers; M3 brings group chats, STscript and the plugin API.
+BakaTavern rewrites SillyTavern (ST) as a Rust server plus a Svelte 5 web app, keeping ST's behavior and data formats. The reference is **SillyTavern 1.19.0**. Milestones (see the roadmap in `README.zh-CN.md`): M1, the chat MVP, is done; M2, prompt-engine parity (Text Completion, regex, full World Info editor, tokenizers, attachments, tool calling, whole-directory migration), is done but for a few providers; M3 (group chats, STscript and Quick Replies, plugin API v1, the TavernHelper bridge for front-end cards, chat search, backgrounds, themes, tag folders, batch edit, home page) is done; M4 brings the official plugins.
 
 ## Architecture rules
 
@@ -8,7 +8,8 @@ BakaTavern rewrites SillyTavern (ST) as a Rust server plus a Svelte 5 web app, k
 2. **Rust stays thin** (`crates/`): storage, files, auth, the outgoing proxy, durable generation jobs, import/export of ST files. Rust does not interpret prompts or provider protocols. If a change needs domain knowledge, it belongs in core.
 3. **ST formats only at the edges.** Inside, data lives in SQLite (see `crates/bt-store/migrations`). ST documents that ST defines (card JSON, presets, lorebook entries, chat metadata, message `extra`) are stored verbatim as JSON so that export is lossless.
 4. **Secrets never reach the browser.** Keys are encrypted at rest and attached by the server only to their `allowed_origins`.
-5. **Parity is measured, not assumed.** Behavior that affects what is sent to the model must match ST 1.19; see "Prompt parity" below.
+5. **Front-end code stays sandboxed.** Message pages and TavernHelper scripts run in iframes without the page's origin (`sandbox="allow-scripts …"`) and reach the app only through `packages/th-bridge` (postMessage RPC plus a copy of the chat state for TavernHelper's synchronous functions). Only a character the user explicitly trusts gets an unsandboxed frame. Plugins run in the page, so they are installed only after the user grants the permissions they list.
+6. **Parity is measured, not assumed.** Behavior that affects what is sent to the model must match ST 1.19; see "Prompt parity" below.
 
 ## Layout
 
@@ -20,6 +21,9 @@ crates/bt-server    axum routes, auth, SSE change events, LLM proxy + durable jo
 crates/bt-cli       the `bakatavern` binary (serve, passwd, import-st)
 packages/core       domain engine (see rule 1)
 packages/api-client typed HTTP client; types generated from Rust with ts-rs (src/generated)
+packages/th-bridge  TavernHelper (酒馆助手) API for front-end cards: frame runtime (built into dist/th-runtime.js),
+                    page-side host, documents for message pages and scripts
+packages/plugin-api plugin SDK types and definePlugin (the contract apps/web/src/lib/plugins implements)
 apps/web            Svelte 5 SPA (runes, no SvelteKit, no Tailwind; CSS tokens in app.css)
 tools/mock-llm      scriptable OpenAI/Claude/Gemini mock that records requests
 tools/e2e           Playwright tests against the real binary, built app and mock
@@ -42,6 +46,8 @@ pnpm exec prettier --check . && cargo fmt --all --check
 
 pnpm --filter @bakatavern/web build && cargo build -p bt-cli && pnpm e2e
 pnpm st-diff:record [scenario-id ...]   # re-record ST requests (needs Docker)
+pnpm st-diff:record-stscript            # re-record STscript results in ST (needs Docker)
+pnpm --filter @bakatavern/th-bridge build  # frame runtime; the web dev/build scripts run it first
 pnpm bindings                # regenerate TS types after changing Rust API types
 ```
 
@@ -64,6 +70,8 @@ Playwright needs a Chromium. Where its download is blocked, install one (e.g. De
 ## Prompt parity
 
 `tools/st-diff/src/scenarios.ts` defines scenarios. `pnpm st-diff:record` writes each one as an ST data directory, runs ST 1.19 in Docker, triggers the generation in headless Chromium and stores the request ST sent into `tools/st-diff/baseline/<id>.json`. `pnpm test` then builds the same request with core and requires it to be identical.
+
+STscript has its own cases (`tools/st-diff/src/stscript-cases.ts`): `pnpm st-diff:record-stscript` runs each script in ST 1.19 and stores its result and side effects in `baseline/stscript.json`; `pnpm test` runs them with core's interpreter and requires the same. Commands that act on the app (chat, generation, World Info, …) live in `apps/web/src/lib/stscript/commands` and are covered by e2e tests.
 
 Scenarios with a `text` field use Text Completion: a backend type, settings and SillyTavern's own templates (vendored in `packages/core/src/prompt/st-templates.json`).
 

@@ -1,0 +1,29 @@
+{
+  "name": "@bakatavern/th-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Front-end card compatibility (TavernHelper / 酒馆助手 API) for sandboxed message iframes and scripts.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./runtime.js": "./dist/th-runtime.js"
+  },
+  "scripts": {
+    "build": "node scripts/build-runtime.ts",
+    "test": "vitest run",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@bakatavern/core": "workspace:*",
+    "jquery": "4.0.0",
+    "lodash": "4.18.1",
+    "marked": "^18.1.1",
+    "yaml": "2.9.1",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/jquery": "^4.0.1",
+    "@types/lodash": "^4.17.26",
+    "rolldown": "1.2.13"
+  }
+}

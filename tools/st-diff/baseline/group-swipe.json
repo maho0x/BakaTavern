@@ -1,0 +1,123 @@
+{
+  "scenario": "group-swipe",
+  "image": "ghcr.io/sillytavern/sillytavern:1.19.0",
+  "recordedAt": "2026-10-19T07:30:59.094Z",
+  "request": {
+    "path": "/v1/chat/completions",
+    "body": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "Write Mei's next reply in a fictional chat between Mei and User."
+        },
+        {
+          "role": "system",
+          "content": "Aiko is a cheerful barista at the Moonlit Café. She remembers every regular by name.\nRen fixes motorbikes two streets away and drops by for espresso.\nMei bakes the croissants for the café."
+        },
+        {
+          "role": "system",
+          "content": "cheerful, curious, a little nosy\ngruff, kind-hearted\nshy, precise"
+        },
+        {
+          "role": "system",
+          "content": "User walks into the café on a rainy evening.\nRen is drying his jacket by the heater."
+        },
+        {
+          "role": "system",
+          "content": "[Example Chat]"
+        },
+        {
+          "role": "system",
+          "content": "User: Hi!",
+          "name": "example_user"
+        },
+        {
+          "role": "system",
+          "content": "Aiko: Oh, hello there! The usual?",
+          "name": "example_assistant"
+        },
+        {
+          "role": "system",
+          "content": "[Example Chat]"
+        },
+        {
+          "role": "system",
+          "content": "User: What do you recommend?",
+          "name": "example_user"
+        },
+        {
+          "role": "system",
+          "content": "Aiko: *She taps the menu.* Matcha latte, always.",
+          "name": "example_assistant"
+        },
+        {
+          "role": "system",
+          "content": "[Example Chat]"
+        },
+        {
+          "role": "system",
+          "content": "User: Busy day?",
+          "name": "example_user"
+        },
+        {
+          "role": "system",
+          "content": "Ren: Three bikes and a scooter. *He grins.*",
+          "name": "example_assistant"
+        },
+        {
+          "role": "system",
+          "content": "[Example Chat]"
+        },
+        {
+          "role": "system",
+          "content": "User: Smells great.",
+          "name": "example_user"
+        },
+        {
+          "role": "system",
+          "content": "Mei: The dough needs another hour.",
+          "name": "example_assistant"
+        },
+        {
+          "role": "system",
+          "content": "[Start a new group chat. Group members: Aiko, Ren, Mei]"
+        },
+        {
+          "role": "assistant",
+          "content": "Aiko: *She looks up from the counter.* Welcome in, User! Rough weather out there?"
+        },
+        {
+          "role": "user",
+          "content": "Evening, everyone."
+        },
+        {
+          "role": "system",
+          "content": "Ren speaks in short sentences."
+        },
+        {
+          "role": "assistant",
+          "content": "Ren: Evening. *He nods at the window.* Some storm."
+        },
+        {
+          "role": "user",
+          "content": "Mei is tired from the night shift."
+        },
+        {
+          "role": "assistant",
+          "content": "Aiko: *She sets down two cups.* Tea for you, espresso for Ren."
+        },
+        {
+          "role": "system",
+          "content": "[Write the next reply only as Mei.]"
+        }
+      ],
+      "model": "mock-model",
+      "temperature": 1,
+      "max_tokens": 300,
+      "stream": false,
+      "presence_penalty": 0,
+      "frequency_penalty": 0,
+      "top_p": 1
+    }
+  }
+}

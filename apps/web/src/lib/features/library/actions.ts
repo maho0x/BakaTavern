@@ -131,3 +131,73 @@ export async function createCharacter() {
 export function excerptText(excerpt: string, name: string) {
   return excerpt.replace(/\{\{char\}\}|<BOT>|<CHAR>/gi, name).replace(/\{\{user\}\}|<USER>/gi, chat.userName);
 }
+
+/** A character or group in the library, as lists hold them. */
+export type LibraryEntry = { kind: 'character'; id: string } | { kind: 'group'; id: string };
+
+/** Marks characters and groups as favorites or not (a character's in its card, as SillyTavern does). */
+export async function setFavorite(entries: readonly LibraryEntry[], fav: boolean) {
+  for (const entry of entries) {
+    if (entry.kind === 'group') {
+      const group = library.group(entry.id);
+      if (!group || group.fav === fav) continue;
+      library.upsertGroup(await api.updateGroup(entry.id, { fav }, group.rev));
+      continue;
+    }
+    const character = await api.getCharacter(entry.id);
+    const card = structuredClone(character.card) as { data?: { extensions?: Record<string, unknown> } };
+    const data = (card.data ??= {});
+    data.extensions = { ...data.extensions, fav };
+    const updated = await api.updateCharacter(entry.id, card as Record<string, unknown>, character.rev);
+    library.upsertCharacter(updated);
+    if (chat.character?.id === entry.id) chat.character = updated;
+  }
+}
+
+/** Adds a tag (made when it is new) to characters and groups. */
+export async function addTag(entries: readonly LibraryEntry[], name: string) {
+  const wanted = name.trim();
+  if (!wanted) return;
+  let tag = library.tags.find((t) => t.name.toLowerCase() === wanted.toLowerCase());
+  if (!tag) {
+    tag = await api.createTag(wanted);
+    await library.refreshTags();
+  }
+  await retag(entries, (tags) => (tags.includes(tag.id) ? tags : [...tags, tag.id]));
+}
+
+export async function removeTag(entries: readonly LibraryEntry[], tagId: string) {
+  await retag(entries, (tags) => tags.filter((id) => id !== tagId));
+}
+
+async function retag(entries: readonly LibraryEntry[], change: (tags: string[]) => string[]) {
+  for (const entry of entries) {
+    const current =
+      entry.kind === 'group' ? library.group(entry.id)?.tags : library.character(entry.id)?.tags;
+    if (!current) continue;
+    const next = change([...current]);
+    if (next.length === current.length && next.every((id, i) => id === current[i])) continue;
+    if (entry.kind === 'group') library.upsertGroup(await api.setGroupTags(entry.id, next));
+    else library.upsertCharacter(await api.setCharacterTags(entry.id, next));
+  }
+}
+
+/** Deletes characters (their chats too); groups lose them as members. */
+export async function deleteCharacters(ids: readonly string[]) {
+  for (const id of ids) {
+    await api.deleteCharacter(id);
+    library.removeCharacter(id);
+    if (chat.characterId === id) chat.close();
+  }
+  if (library.groups.some((g) => g.members.some((m) => ids.includes(m.characterId))))
+    await library.refreshGroups();
+  if (chat.members.some((m) => ids.includes(m.id))) await chat.reloadGroup();
+}
+
+export async function deleteGroups(ids: readonly string[]) {
+  for (const id of ids) {
+    await api.deleteGroup(id);
+    if (chat.groupId === id) chat.close();
+  }
+  await library.refreshGroups();
+}

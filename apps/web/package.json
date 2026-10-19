@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "dev": "pnpm --filter @bakatavern/th-bridge build && vite",
+    "build": "pnpm --filter @bakatavern/th-bridge build && vite build",
     "preview": "vite preview",
     "typecheck": "svelte-check --tsconfig ./tsconfig.json --fail-on-warnings",
     "test": "vitest run"
@@ -13,6 +13,8 @@
   "dependencies": {
     "@bakatavern/api-client": "workspace:*",
     "@bakatavern/core": "workspace:*",
+    "@bakatavern/plugin-api": "workspace:*",
+    "@bakatavern/th-bridge": "workspace:*",
     "dompurify": "^3.4.17",
     "marked": "^18.1.1"
   },

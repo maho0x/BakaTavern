@@ -1,0 +1,117 @@
+{
+  "scenario": "group-claude",
+  "image": "ghcr.io/sillytavern/sillytavern:1.19.0",
+  "recordedAt": "2026-10-19T07:31:12.620Z",
+  "request": {
+    "path": "/v1/messages",
+    "body": {
+      "messages": [
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Write Ren's next reply in a fictional chat between Ren and User."
+            },
+            {
+              "type": "text",
+              "text": "Ren fixes motorbikes two streets away and drops by for espresso."
+            },
+            {
+              "type": "text",
+              "text": "gruff, kind-hearted"
+            },
+            {
+              "type": "text",
+              "text": "Ren is drying his jacket by the heater."
+            },
+            {
+              "type": "text",
+              "text": "[Example Chat]"
+            },
+            {
+              "type": "text",
+              "text": "User: Busy day?"
+            },
+            {
+              "type": "text",
+              "text": "Ren: Three bikes and a scooter. *He grins.*"
+            },
+            {
+              "type": "text",
+              "text": "[Start a new group chat. Group members: Aiko, Ren, Mei]"
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "Aiko: *She looks up from the counter.* Welcome in, User! Rough weather out there?"
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Evening, everyone."
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "Ren: Evening. *He nods at the window.* Some storm."
+            },
+            {
+              "type": "text",
+              "text": "Aiko: *She sets down two cups.* Tea for you, espresso for Ren."
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Ren speaks in short sentences."
+            }
+          ]
+        },
+        {
+          "role": "assistant",
+          "content": [
+            {
+              "type": "text",
+              "text": "Mei: I saved a croissant for whoever wants it."
+            }
+          ]
+        },
+        {
+          "role": "user",
+          "content": [
+            {
+              "type": "text",
+              "text": "Ren, how is the bike?"
+            },
+            {
+              "type": "text",
+              "text": "[Write the next reply only as Ren.]"
+            }
+          ]
+        }
+      ],
+      "model": "claude-sonnet-4-5",
+      "max_tokens": 300,
+      "stop_sequences": [],
+      "temperature": 1,
+      "top_k": 0,
+      "stream": false
+    }
+  }
+}

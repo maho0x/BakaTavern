@@ -18,7 +18,8 @@
     "bindings": "cargo test --workspace export_bindings && node tools/scripts/gen-api-types.mjs",
     "mock-llm": "node tools/mock-llm/src/main.ts",
     "e2e": "pnpm --filter @bakatavern/e2e e2e",
-    "st-diff:record": "pnpm --filter @bakatavern/st-diff record"
+    "st-diff:record": "pnpm --filter @bakatavern/st-diff record",
+    "st-diff:record-stscript": "pnpm --filter @bakatavern/st-diff record:stscript"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

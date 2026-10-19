@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  backgroundDefaults,
   chatDefaults,
   connectionDefaults,
   formattingDefaults,
   noteDefaults,
+  quickReplyDefaults,
   regexDefaults,
   worldInfoDefaults,
   type ConnectionPrefs,
@@ -69,7 +71,10 @@ const stash: StImportStash = {
       persona_descriptions: {
         'user-default.png': {
           description: 'A nurse.',
-          connections: [{ type: 'character', id: 'Seraphina.png' }],
+          connections: [
+            { type: 'character', id: 'Seraphina.png' },
+            { type: 'group', id: '1760000000000' },
+          ],
         },
       },
     },
@@ -94,6 +99,21 @@ const stash: StImportStash = {
       character_allowed_regex: ['Seraphina.png', 'Missing.png'],
       preset_allowed_regex: { openai: ['My Preset'] },
       variables: { global: { mood: '"happy"', count: '3' } },
+      quickReplyV2: {
+        isEnabled: true,
+        isCombined: true,
+        isPopout: false,
+        config: {
+          setList: [
+            { set: 'Tools', isVisible: true },
+            { set: 'Hidden', isVisible: false },
+          ],
+        },
+        characterConfigs: {
+          'Seraphina.png': { setList: [{ set: 'Healing', isVisible: true }] },
+          'Missing.png': { setList: [{ set: 'Gone', isVisible: true }] },
+        },
+      },
       connectionManager: {
         selectedProfile: 'p1',
         profiles: [
@@ -122,11 +142,14 @@ const stash: StImportStash = {
       },
     },
     proxies: [{ name: 'Home', url: 'http://192.168.1.2:8080/v1', password: '' }],
+    background: { name: 'rain day.jpg', url: 'url("backgrounds/rain%20day.jpg")', fitting: 'contain' },
   },
   characters: { 'Seraphina.png': 'char-1' },
+  groups: { '1760000000000': 'group-1' },
   personas: { 'user-default.png': 'persona-1' },
   lorebooks: { Eldoria: 'book-1' },
   presets: { 'openai/My Preset': 'preset-1' },
+  backgrounds: [{ name: 'rain day.jpg', hash: 'h1' }],
   secrets: [
     { id: 'key-1', provider: 'openrouter', active: true, stId: 'st-key-1' },
     { id: 'key-2', provider: 'custom', active: true },
@@ -182,7 +205,7 @@ describe('mapStSettings', () => {
     expect(patch.note.characterNotes).toEqual({
       'char-1': { prompt: 'Speaks softly.', position: 2, enabled: true },
     });
-    expect(patch.persona.characterPersona).toEqual({ 'char-1': 'persona-1' });
+    expect(patch.persona.characterPersona).toEqual({ 'char-1': 'persona-1', 'group-1': 'persona-1' });
   });
 
   it('brings regex scripts up to date and translates who may run embedded ones', () => {
@@ -191,6 +214,28 @@ describe('mapStSettings', () => {
     expect(patch.regex.allowedCharacters).toEqual(['char-1']);
     expect(patch.regex.allowedPresets).toEqual(['preset-1']);
     expect(patch.variables).toEqual({ mood: 'happy', count: 3 });
+  });
+
+  it('keeps the background pictures and the one in use', () => {
+    expect(patch.background).toEqual({
+      items: [{ name: 'rain day.jpg', hash: 'h1' }],
+      current: 'rain day.jpg',
+      fit: 'contain',
+    });
+  });
+
+  it('keeps where Quick Reply sets show, character links by character id', () => {
+    expect(patch.quickReply).toEqual({
+      isEnabled: true,
+      isCombined: true,
+      config: {
+        setList: [
+          { set: 'Tools', isVisible: true },
+          { set: 'Hidden', isVisible: false },
+        ],
+      },
+      characterConfigs: { 'char-1': { setList: [{ set: 'Healing', isVisible: true }] } },
+    });
   });
 
   it('lets imported keys reach their provider or the Custom URL', () => {
@@ -269,6 +314,7 @@ describe('toStSettings', () => {
     const names = {
       characters: { 'char-1': 'Seraphina.png' },
       personas: { 'persona-1': 'user-default.png' },
+      groups: { 'group-1': '1760000000000' },
     };
     const exported = toStSettings({
       names,
@@ -279,6 +325,8 @@ describe('toStSettings', () => {
       persona: { defaultPersonaId: null, characterPersona: patch.persona.characterPersona ?? {} },
       regex: { ...regexDefaults, ...patch.regex } as RegexPrefs,
       variables: patch.variables,
+      quickReply: { ...quickReplyDefaults, ...patch.quickReply },
+      background: { ...backgroundDefaults, ...patch.background },
       presetNames: { 'preset-1': 'My Preset' },
       formatting: { ...formattingDefaults, ...patch.formatting },
       logitbias: { lists: patch.logitbias.lists ?? {} },
@@ -296,6 +344,8 @@ describe('toStSettings', () => {
     expect(again.regex.allowedCharacters).toEqual(['char-1']);
     expect(again.regex.allowedPresets).toEqual(['preset-1']);
     expect(again.variables).toEqual(patch.variables);
+    expect(again.quickReply).toEqual(patch.quickReply);
+    expect(again.background).toEqual(patch.background);
     expect(again.connection.api).toBe('text');
     // Keys are not part of settings.json.
     expect({ ...again.connection.text, secretIds: {} }).toEqual({ ...patch.connection.text, secretIds: {} });

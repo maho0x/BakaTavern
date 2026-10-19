@@ -10,13 +10,14 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::Value;
+
 use tokio::io::AsyncWriteExt;
 use ts_rs::TS;
 
 use crate::auth::{ClientId, CurrentUser};
 use crate::convert::attachment;
 use crate::error::{ApiError, ApiResult};
-use crate::st_export::{self, StExportNames};
+use crate::st_export::{self, BackgroundFile, StExportNames};
 use crate::st_import::{self, ImportOptions, StImportReport};
 use crate::state::AppState;
 
@@ -97,6 +98,10 @@ pub struct StExportRequest {
     /// SillyTavern `settings.json`, written by the web app with the names from `/api/export/st/names`.
     #[ts(type = "Record<string, unknown>")]
     pub settings: Value,
+    /// Chat backgrounds to include, by the names the settings use.
+    #[serde(default)]
+    #[ts(optional)]
+    pub backgrounds: Option<Vec<BackgroundFile>>,
 }
 
 async fn export_st(
@@ -109,7 +114,14 @@ async fn export_st(
         .await
         .map_err(ApiError::internal)?
         .map_err(ApiError::internal)?;
-    let mut file = st_export::write_zip(&state, &user.id, body.settings, file).await?;
+    let mut file = st_export::write_zip(
+        &state,
+        &user.id,
+        body.settings,
+        body.backgrounds.unwrap_or_default(),
+        file,
+    )
+    .await?;
     file.seek(SeekFrom::Start(0)).map_err(ApiError::internal)?;
     let stream = tokio_util::io::ReaderStream::new(tokio::fs::File::from_std(file));
     let mut response = Body::from_stream(stream).into_response();

@@ -17,13 +17,15 @@ export async function mockReply(
   request: APIRequestContext,
   state: {
     reply?: string | null;
+    /** One reply per request, in order, before `reply` applies again. */
+    replies?: string[];
     reasoning?: string | null;
     delayMs?: number;
     toolCall?: { name: string; arguments: Record<string, unknown> } | null;
   },
 ) {
   await request.post(`${mockUrl}/__reply`, {
-    data: { reply: null, reasoning: null, delayMs: 5, toolCall: null, ...state },
+    data: { reply: null, replies: [], reasoning: null, delayMs: 5, toolCall: null, ...state },
   });
 }
 
@@ -72,7 +74,7 @@ export function isMobile(page: Page) {
 /** Imports PNG cards through the library's file picker and waits for the chat to open. */
 export async function importCards(page: Page, files: { name: string; card: { v2?: object; v3?: object } }[]) {
   const input = page.locator('input[type=file][accept*=".png"]');
-  await page.getByRole('region', { name: 'Chat' }).waitFor();
+  await page.getByRole('region', { name: 'Chat', exact: true }).waitFor();
   // The welcome screen has its own import; on phones an open chat hides the library.
   if ((await input.count()) === 0) await page.getByRole('button', { name: 'Characters' }).first().click();
   await input

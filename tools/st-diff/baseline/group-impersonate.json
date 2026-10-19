@@ -1,0 +1,77 @@
+{
+  "scenario": "group-impersonate",
+  "image": "ghcr.io/sillytavern/sillytavern:1.19.0",
+  "recordedAt": "2026-10-19T07:30:46.538Z",
+  "request": {
+    "path": "/v1/chat/completions",
+    "body": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "Write Mei's next reply in a fictional chat between Mei and User."
+        },
+        {
+          "role": "system",
+          "content": "Mei bakes the croissants for the café."
+        },
+        {
+          "role": "system",
+          "content": "shy, precise"
+        },
+        {
+          "role": "system",
+          "content": "[Example Chat]"
+        },
+        {
+          "role": "system",
+          "content": "User: Smells great.",
+          "name": "example_user"
+        },
+        {
+          "role": "system",
+          "content": "Mei: The dough needs another hour.",
+          "name": "example_assistant"
+        },
+        {
+          "role": "system",
+          "content": "[Start a new group chat. Group members: Aiko, Ren, Mei]"
+        },
+        {
+          "role": "assistant",
+          "content": "Aiko: *She looks up from the counter.* Welcome in, User! Rough weather out there?"
+        },
+        {
+          "role": "user",
+          "content": "Evening, everyone."
+        },
+        {
+          "role": "assistant",
+          "content": "Ren: Evening. *He nods at the window.* Some storm."
+        },
+        {
+          "role": "assistant",
+          "content": "Aiko: *She sets down two cups.* Tea for you, espresso for Ren."
+        },
+        {
+          "role": "user",
+          "content": "Mei is tired from the night shift."
+        },
+        {
+          "role": "assistant",
+          "content": "Mei: I saved a croissant for whoever wants it."
+        },
+        {
+          "role": "system",
+          "content": "[Write your next reply from the point of view of User, using the chat history so far as a guideline for the writing style of User. Don't write as Mei or system. Don't describe actions of Mei.]"
+        }
+      ],
+      "model": "mock-model",
+      "temperature": 1,
+      "max_tokens": 300,
+      "stream": false,
+      "presence_penalty": 0,
+      "frequency_penalty": 0,
+      "top_p": 1
+    }
+  }
+}

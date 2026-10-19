@@ -1,5 +1,7 @@
 /** Post-processing of model output (port of SillyTavern `cleanUpMessage` and reasoning parsing). */
 
+import { cleanGroupMessage } from '../group/index.ts';
+
 export interface CleanupOptions {
   isImpersonate: boolean;
   isContinue: boolean;
@@ -24,6 +26,8 @@ export interface CleanupOptions {
   };
   /** Cut the reply after its last complete sentence. */
   trimSentences?: boolean;
+  /** Group chats: the members' names; the reply is cut where it speaks for another one. */
+  groupNames?: readonly string[];
 }
 
 /** Cuts text after its last complete sentence (SillyTavern `trimToEndSentence`). */
@@ -120,6 +124,7 @@ export function cleanUpMessage(text: string, options: CleanupOptions): string {
       }
     }
   }
+  if (options.groupNames) message = cleanGroupMessage(message, options.groupNames, options.charName ?? '');
   if (options.charName) {
     message = message.replace(new RegExp(`(^|\n)${escapeRegex(options.charName)}:\\s*`, 'g'), '$1');
   }
@@ -160,4 +165,43 @@ export function extractReasoning(
     content: rest.slice(end + suffix.length).trimStart(),
     complete: true,
   };
+}
+
+/**
+ * Splits a `prefix … suffix` block off a text (SillyTavern `parseReasoningFromString`); `strict`
+ * wants it at the start. Null without a prefix and a suffix; no block leaves the text as it was.
+ */
+export function parseReasoningFromString(
+  text: string,
+  template: ReasoningTemplate,
+  { strict = true, trimSpaces = true }: { strict?: boolean; trimSpaces?: boolean } = {},
+): { reasoning: string; content: string } | null {
+  if (!template.prefix || !template.suffix) return null;
+  const pattern = new RegExp(
+    `${strict ? '^\\s*?' : ''}${escapeRegex(template.prefix)}(.*?)${escapeRegex(template.suffix)}`,
+    's',
+  );
+  let found = false;
+  let reasoning = '';
+  let content = text.replace(pattern, (_match, inner: string) => {
+    found = true;
+    reasoning = inner;
+    return '';
+  });
+  if (found && trimSpaces) {
+    reasoning = reasoning.trim();
+    content = content.trim();
+  }
+  return { reasoning, content };
+}
+
+/** Reasoning and content as one text, the reverse of {@link parseReasoningFromString}. */
+export function formatReasoning(
+  reasoning: string,
+  content: string,
+  template: ReasoningTemplate & { separator?: string },
+  substitute: (text: string) => string = (text) => text,
+): string {
+  if (!reasoning || !template.prefix || !template.suffix) return content;
+  return `${substitute(template.prefix)}${reasoning}${substitute(template.suffix)}${substitute(template.separator ?? '')}${content}`;
 }

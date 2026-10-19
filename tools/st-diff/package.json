@@ -7,7 +7,8 @@
   "scripts": {
     "test": "vitest run",
     "record": "node src/record.ts",
-    "typecheck": "tsc -p tsconfig.json"
+    "typecheck": "tsc -p tsconfig.json",
+    "record:stscript": "node src/record-stscript.ts"
   },
   "dependencies": {
     "@bakatavern/core": "workspace:*"

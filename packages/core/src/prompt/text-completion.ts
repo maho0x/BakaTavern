@@ -83,6 +83,7 @@ export interface TextCompletionInput {
   countTokens: (text: string) => number | Promise<number>;
   substitute: (text: string, names?: { user: string; char: string }) => string;
   isGroup?: boolean;
+  groupNames?: readonly string[];
 }
 
 export interface TextCompletionResult {
@@ -116,6 +117,7 @@ export async function buildTextCompletion(input: TextCompletionInput): Promise<T
     userName: name1,
     charName: name2,
     isGroup: Boolean(input.isGroup),
+    groupNames: input.groupNames,
     substitute,
   };
   const countTokens = async (text: string, padding = 0) =>

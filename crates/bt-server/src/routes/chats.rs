@@ -5,9 +5,12 @@ use axum::{Json, Router, routing};
 use bt_formats::chat;
 use bt_store::repo::chats::{self, Chat, NewChat};
 use bt_store::repo::messages::{self, Message, MessagePatch, NewMessage};
+use bt_store::repo::search::{self, SearchHit, SearchScope};
+use bt_store::repo::{characters, groups};
 use bt_store::util::now_ms;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
+use std::collections::HashMap;
 use ts_rs::TS;
 
 use super::{field, read_multipart, single_upload};
@@ -24,6 +27,7 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/api/chats", routing::post(create))
         .route("/api/chats/recent", routing::get(recent))
+        .route("/api/search", routing::get(search))
         .route("/api/chats/import", routing::post(import))
         .route(
             "/api/chats/{id}",
@@ -79,6 +83,34 @@ async fn recent(
     ))
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SearchQuery {
+    q: String,
+    character_id: Option<String>,
+    group_id: Option<String>,
+    limit: Option<usize>,
+}
+
+/// Messages of the user's chats containing the text, newest first.
+async fn search(
+    State(state): State<AppState>,
+    user: CurrentUser,
+    Query(q): Query<SearchQuery>,
+) -> ApiResult<Json<Vec<SearchHit>>> {
+    let limit = q.limit.unwrap_or(50).clamp(1, 200);
+    let scope = SearchScope {
+        character_id: q.character_id,
+        group_id: q.group_id,
+    };
+    Ok(Json(
+        state
+            .db
+            .read(move |c| search::messages(c, &user.id, &q.q, &scope, limit))
+            .await?,
+    ))
+}
+
 async fn get(
     State(state): State<AppState>,
     user: CurrentUser,
@@ -94,6 +126,8 @@ async fn get(
 #[ts(export, optional_fields)]
 pub struct CreateChat {
     pub character_id: Option<String>,
+    /// A group chat instead of a character's.
+    pub group_id: Option<String>,
     pub title: Option<String>,
     #[ts(optional, type = "Record<string, unknown>")]
     pub metadata: Option<Value>,
@@ -137,7 +171,7 @@ async fn create(
                 &user_id,
                 NewChat {
                     character_id: body.character_id,
-                    group_id: None,
+                    group_id: body.group_id,
                     title,
                     metadata: body
                         .metadata
@@ -499,6 +533,7 @@ async fn branch(
                 .map(|m| NewMessage {
                     role: m.role,
                     name: m.name,
+                    character_id: m.character_id,
                     hidden: Some(m.hidden),
                     swipe_id: Some(m.swipe_id),
                     swipes: m.swipes,
@@ -514,13 +549,10 @@ async fn branch(
                 }
                 last.swipe_id = Some(swipe_id);
             }
-            let titles: Vec<String> = match &source.character_id {
-                Some(character_id) => chats::list_for_character(&tx, &user_id, character_id)?
-                    .into_iter()
-                    .map(|c| c.title)
-                    .collect(),
-                None => Vec::new(),
-            };
+            let titles: Vec<String> = chats::siblings(&tx, &user_id, &source)?
+                .into_iter()
+                .map(|c| c.title)
+                .collect();
             let title = match body
                 .title
                 .map(|t| t.trim().to_string())
@@ -618,12 +650,15 @@ async fn import(
     multipart: Multipart,
 ) -> ApiResult<Json<Chat>> {
     let (uploads, fields) = read_multipart(multipart).await?;
-    let character_id = field(&fields, "characterId").map(str::to_string);
+    let owner = ChatOwner {
+        character_id: field(&fields, "characterId").map(str::to_string),
+        group_id: field(&fields, "groupId").map(str::to_string),
+    };
     let upload = single_upload(uploads)?;
     let text = String::from_utf8(upload.bytes)
         .map_err(|_| ApiError::bad_request("the chat file is not UTF-8 text"))?;
     let title = upload.file_name.trim_end_matches(".jsonl").to_string();
-    let chat = import_jsonl(&state, &user.id, character_id, title, &text).await?;
+    let chat = import_jsonl(&state, &user.id, owner, title, &text).await?;
     state.notify(
         &user.id,
         "chat",
@@ -635,29 +670,48 @@ async fn import(
     Ok(Json(chat))
 }
 
-/// Imports a SillyTavern JSONL chat for a character.
+/// Whose chat an imported file becomes: a character's or a group's.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ChatOwner {
+    pub character_id: Option<String>,
+    pub group_id: Option<String>,
+}
+
+/// Imports a SillyTavern JSONL chat for a character or group.
 pub(crate) async fn import_jsonl(
     state: &AppState,
     user_id: &str,
-    character_id: Option<String>,
+    owner: ChatOwner,
     title: String,
     text: &str,
 ) -> ApiResult<Chat> {
-    import_parsed(
-        state,
-        user_id,
-        character_id,
-        title,
-        chat::parse_jsonl(text)?,
-    )
-    .await
+    import_parsed(state, user_id, owner, title, chat::parse_jsonl(text)?).await
+}
+
+/// The member who wrote each message of a group chat: by SillyTavern avatar file
+/// (`original_avatar`), else by name.
+fn group_speakers(
+    conn: &bt_store::rusqlite::Connection,
+    user_id: &str,
+    group_id: &str,
+) -> bt_store::Result<(HashMap<String, String>, HashMap<String, String>)> {
+    let mut by_avatar = HashMap::new();
+    let mut by_name = HashMap::new();
+    for member in groups::get(conn, user_id, group_id)?.members {
+        let character = characters::get(conn, user_id, &member.character_id)?.summary;
+        if let Some(file) = character.source_file {
+            by_avatar.insert(file, character.id.clone());
+        }
+        by_name.entry(character.name).or_insert(character.id);
+    }
+    Ok((by_avatar, by_name))
 }
 
 /// Stores a parsed SillyTavern chat as a new chat.
 pub(crate) async fn import_parsed(
     state: &AppState,
     user_id: &str,
-    character_id: Option<String>,
+    owner: ChatOwner,
     title: String,
     parsed: chat::StChat,
 ) -> ApiResult<Chat> {
@@ -671,20 +725,42 @@ pub(crate) async fn import_parsed(
         .db
         .write(move |c| {
             let tx = c.transaction()?;
+            let speakers = match &owner.group_id {
+                Some(group_id) => Some(group_speakers(&tx, &user_id, group_id)?),
+                None => None,
+            };
             let chat = chats::create(
                 &tx,
                 &user_id,
                 NewChat {
-                    character_id,
-                    group_id: None,
+                    character_id: owner.character_id,
+                    group_id: owner.group_id,
                     title,
                     metadata: parsed.metadata,
                     header: Value::Object(parsed.header),
                     created_at,
                 },
             )?;
-            let new_messages: Vec<NewMessage> =
-                parsed.messages.into_iter().map(st_to_new_message).collect();
+            let new_messages: Vec<NewMessage> = parsed
+                .messages
+                .into_iter()
+                .map(|m| {
+                    let speaker = speakers.as_ref().filter(|_| m.role != "user").and_then(
+                        |(by_avatar, by_name)| {
+                            m.data
+                                .get("original_avatar")
+                                .and_then(Value::as_str)
+                                .and_then(|avatar| by_avatar.get(avatar))
+                                .or_else(|| by_name.get(&m.name))
+                                .cloned()
+                        },
+                    );
+                    NewMessage {
+                        character_id: speaker,
+                        ..st_to_new_message(m)
+                    }
+                })
+                .collect();
             messages::insert(&tx, &chat.id, None, &new_messages)?;
             let chat = chats::get(&tx, &user_id, &chat.id)?;
             tx.commit()?;
@@ -705,6 +781,7 @@ async fn export(
     Path(id): Path<String>,
     Query(q): Query<ExportQuery>,
 ) -> ApiResult<Response> {
+    let user_id = user.id.clone();
     let (chat, rows) = state
         .db
         .read(move |c| {
@@ -713,8 +790,18 @@ async fn export(
             Ok((chat, rows))
         })
         .await?;
-    let st_messages: Vec<_> = rows.iter().map(message_to_st).collect();
-    let header_map = chat.header.as_object().cloned().unwrap_or_else(Map::new);
+    // Group chats name the member who wrote each message.
+    let st_messages: Vec<_> = if chat.group_id.is_some() {
+        let names = crate::st_export::names(&state, &user_id).await?;
+        crate::st_export::st_messages(&rows, &names)
+    } else {
+        rows.iter().map(message_to_st).collect()
+    };
+    let header_map = if chat.group_id.is_some() {
+        Map::new()
+    } else {
+        chat.header.as_object().cloned().unwrap_or_else(Map::new)
+    };
     let (body, mime, ext) = match q.format.as_deref().unwrap_or("jsonl") {
         "jsonl" => (
             chat::to_jsonl(&header_map, &chat.metadata, &st_messages),

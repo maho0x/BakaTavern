@@ -6,6 +6,8 @@ use crate::Result;
 const MIGRATIONS: &[(i64, &str)] = &[
     (1, include_str!("../migrations/0001_init.sql")),
     (2, include_str!("../migrations/0002_prompt_logs.sql")),
+    (3, include_str!("../migrations/0003_groups.sql")),
+    (4, include_str!("../migrations/0004_search.sql")),
 ];
 
 pub(crate) fn run(conn: &mut Connection) -> Result<()> {

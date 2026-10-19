@@ -538,6 +538,44 @@ async fn sillytavern_chats_round_trip_losslessly() {
 }
 
 #[tokio::test]
+async fn messages_are_found_by_their_text() {
+    let t = test_app();
+    let path = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/st/chats/Seraphina - 2026-10-14@23h56m12s.jsonl"
+    );
+    let original = std::fs::read_to_string(path).unwrap();
+    let (_, chat) = t
+        .upload(
+            "/api/chats/import",
+            "Forest.jsonl",
+            original.as_bytes(),
+            &[],
+        )
+        .await;
+    let (status, hits) = t.json("GET", "/api/search?q=FOREST%20found", None).await;
+    assert_eq!(status, StatusCode::OK, "{hits}");
+    let hits = hits.as_array().unwrap();
+    assert_eq!(hits.len(), 1);
+    assert_eq!(hits[0]["chatId"], chat["id"]);
+    assert_eq!(hits[0]["seq"], 0);
+    assert_eq!(hits[0]["name"], "Seraphina");
+    assert!(
+        hits[0]["snippet"]
+            .as_str()
+            .unwrap()
+            .contains("forest found")
+    );
+    // Two characters (shorter than the index) still work, in any script.
+    let (_, short) = t
+        .json("GET", "/api/search?q=%E5%93%AA%E9%87%8C", None)
+        .await;
+    assert_eq!(short.as_array().unwrap()[0]["name"], "User");
+    let (_, none) = t.json("GET", "/api/search?q=&limit=5", None).await;
+    assert!(none.as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn branches_and_checkpoints_link_back_like_sillytavern() {
     let t = test_app();
     let (_, imported) = t
@@ -722,6 +760,23 @@ async fn tokenizer_files_come_from_the_cache() {
 
 /// A SillyTavern user directory as a backup zip: a card with chats, a lorebook, presets, a
 /// persona with avatar, tags, keys and things BakaTavern does not import yet.
+/// A SillyTavern group chat: the header has no names, members' messages name their avatar.
+fn group_chat_jsonl() -> String {
+    [
+        json!({ "chat_metadata": { "note_prompt": "" }, "user_name": "unused", "character_name": "unused" }),
+        json!({ "name": "Mika", "is_user": true, "is_system": false, "send_date": "2026-10-15T12:00:00.000Z", "mes": "Hi both!", "extra": {} }),
+        json!({ "name": "Seraphina", "is_user": false, "is_system": false, "send_date": "2026-10-15T12:00:01.000Z", "mes": "Welcome.",
+            "extra": { "gen_id": 1 }, "original_avatar": "Seraphina.png", "force_avatar": "/thumbnail?type=avatar&file=Seraphina.png",
+            "swipe_id": 0, "swipes": ["Welcome."], "swipe_info": [{ "send_date": "2026-10-15T12:00:01.000Z", "extra": { "gen_id": 1 } }] }),
+        json!({ "name": "Aria", "is_user": false, "is_system": false, "send_date": "2026-10-15T12:00:02.000Z", "mes": "Hey!",
+            "extra": {}, "original_avatar": "Aria.png", "force_avatar": "/thumbnail?type=avatar&file=Aria.png" }),
+    ]
+    .iter()
+    .map(Value::to_string)
+    .collect::<Vec<_>>()
+    .join("\n")
+}
+
 fn st_backup_zip() -> Vec<u8> {
     use std::io::Write;
     let chat = std::fs::read_to_string(concat!(
@@ -739,7 +794,7 @@ fn st_backup_zip() -> Vec<u8> {
             "default_persona": "user-default.png"
         },
         "tags": [{ "id": "1700000000000", "name": "favorite", "folder_type": "OPEN", "color": "#ff0000" }],
-        "tag_map": { "Seraphina.png": ["1700000000000"] },
+        "tag_map": { "Seraphina.png": ["1700000000000"], "1760000000000": ["1700000000000"] },
         "extension_settings": { "regex": [{ "id": "r1", "scriptName": "Shout", "findRegex": "/a/g", "replaceString": "A" }] },
         "world_info_settings": { "world_info": { "globalSelect": ["Eldoria"] } }
     });
@@ -780,9 +835,36 @@ fn st_backup_zip() -> Vec<u8> {
         ),
         ("OpenAI Settings/My Preset.json", json!({ "temp_openai": 0.7 }).to_string().into_bytes()),
         ("instruct/ChatML.json", json!({ "name": "ChatML", "input_sequence": "<|im_start|>user" }).to_string().into_bytes()),
+        (
+            "QuickReplies/Tools.json",
+            json!({ "version": 2, "name": "Tools", "disableSend": false, "qrList": [{ "id": 1, "label": "Roll", "message": "/roll 1d20" }], "idIndex": 1 })
+                .to_string()
+                .into_bytes(),
+        ),
         ("User Avatars/user-default.png", bt_formats::png::placeholder()),
-        ("groups/1.json", b"{}".to_vec()),
+        ("characters/Aria.png", card_png("Aria")),
+        (
+            "groups/1760000000000.json",
+            json!({
+                "id": "1760000000000", "name": "Party", "members": ["Seraphina.png", "Aria.png"],
+                "disabled_members": ["Aria.png"], "avatar_url": "", "allow_self_responses": true,
+                "activation_strategy": 1, "generation_mode": 1, "fav": true,
+                "chat_id": "2026-10-15@12h00m00s", "chats": ["2026-10-15@12h00m00s", "Never saved"],
+                "auto_mode_delay": 5, "generation_mode_join_prefix": "<{{char}}>",
+                "generation_mode_join_suffix": "", "date_added": 1, "chat_size": 2
+            })
+            .to_string()
+            .into_bytes(),
+        ),
+        ("group chats/2026-10-15@12h00m00s.jsonl", group_chat_jsonl().into_bytes()),
+        ("group chats/Orphan.jsonl", b"{}\n".to_vec()),
         ("backgrounds/rain.jpg", b"jpeg".to_vec()),
+        (
+            "themes/Night.json",
+            json!({ "name": "Night", "main_text_color": "rgba(220, 220, 210, 1)", "custom_css": "" })
+                .to_string()
+                .into_bytes(),
+        ),
     ];
     let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
     let options = zip::write::SimpleFileOptions::default();
@@ -806,25 +888,78 @@ async fn sillytavern_backups_import_once() {
         )
         .await;
     assert_eq!(status, StatusCode::OK, "{report}");
-    assert_eq!(report["characters"], 1);
-    assert_eq!(report["chats"], 2);
+    assert_eq!(report["characters"], 2);
+    assert_eq!(report["groups"], 1);
+    assert_eq!(report["chats"], 3);
     assert_eq!(report["lorebooks"], 1);
-    assert_eq!(report["presets"], 2);
+    assert_eq!(report["presets"], 4);
     assert_eq!(report["personas"], 2);
     assert_eq!(report["secrets"], 1);
     assert_eq!(report["attachments"], 2);
     // Two links point at files the backup does not have (one in the fixture chat).
     assert_eq!(report["skipped"]["missingAttachments"], 2);
     assert_eq!(report["settings"], true);
-    assert_eq!(report["skipped"]["groups"], 1);
-    assert_eq!(report["skipped"]["backgrounds"], 1);
+    assert_eq!(report["skipped"]["chatsWithoutGroup"], 1);
+    assert_eq!(report["backgrounds"], 1);
+    assert!(report["skipped"].get("backgrounds").is_none());
     assert_eq!(report["skipped"]["chatsWithoutCharacter"], 1);
     assert_eq!(report["skipped"]["otherKeys"], 1);
     assert_eq!(report["failures"], json!([]));
 
     let (_, characters) = t.json("GET", "/api/characters", None).await;
-    let seraphina = &characters[0];
+    let by_name = |name: &str| {
+        characters
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["name"] == name)
+            .unwrap()
+            .clone()
+    };
+    let (seraphina, aria) = (by_name("Seraphina"), by_name("Aria"));
     assert_eq!(seraphina["sourceFile"], "Seraphina.png");
+
+    // The group, its members (Aria muted), settings and chat.
+    let (_, groups) = t.json("GET", "/api/groups", None).await;
+    let group = &groups[0];
+    assert_eq!(group["name"], "Party");
+    assert_eq!(group["fav"], true);
+    assert_eq!(group["sourceId"], "1760000000000");
+    assert_eq!(
+        group["members"],
+        json!([
+            { "characterId": seraphina["id"], "muted": false },
+            { "characterId": aria["id"], "muted": true }
+        ])
+    );
+    assert_eq!(group["settings"]["activation_strategy"], 1);
+    assert_eq!(
+        group["settings"]["generation_mode_join_prefix"],
+        "<{{char}}>"
+    );
+    assert!(group["settings"].get("chat_size").is_none());
+    assert_eq!(group["tags"].as_array().unwrap().len(), 1);
+    let (_, group_chats) = t
+        .json(
+            "GET",
+            &format!("/api/groups/{}/chats", group["id"].as_str().unwrap()),
+            None,
+        )
+        .await;
+    assert_eq!(group_chats[0]["title"], "2026-10-15@12h00m00s");
+    let (_, messages) = t
+        .json(
+            "GET",
+            &format!(
+                "/api/chats/{}/messages",
+                group_chats[0]["id"].as_str().unwrap()
+            ),
+            None,
+        )
+        .await;
+    assert_eq!(messages[0]["characterId"], Value::Null);
+    assert_eq!(messages[1]["characterId"], seraphina["id"]);
+    assert_eq!(messages[2]["characterId"], aria["id"]);
     let (_, chats) = t
         .json(
             "GET",
@@ -913,19 +1048,26 @@ async fn sillytavern_backups_import_once() {
         seraphina["id"]
     );
     assert!(stash["data"]["presets"]["openai/My Preset"].is_string());
+    assert!(stash["data"]["presets"]["qr/Tools"].is_string());
+    assert!(stash["data"]["presets"]["theme/Night"].is_string());
+    assert_eq!(stash["data"]["backgrounds"][0]["name"], "rain.jpg");
+    assert!(stash["data"]["backgrounds"][0]["hash"].is_string());
     assert_eq!(stash["data"]["secrets"][0]["active"], true);
     assert_eq!(stash["data"]["secrets"][0]["stId"], "k1");
 
     // A second import changes nothing that is already here.
     let (_, again) = t.upload("/api/import/st", "backup.zip", &backup, &[]).await;
     assert_eq!(again["characters"], 0);
+    assert_eq!(again["groups"], 0);
     assert_eq!(again["chats"], 0);
     assert_eq!(again["lorebooks"], 0);
     assert_eq!(again["personas"], 0);
-    assert_eq!(again["presets"], 2);
-    assert_eq!(again["unchanged"], 6);
+    assert_eq!(again["presets"], 4);
+    assert_eq!(again["unchanged"], 9);
     let (_, characters) = t.json("GET", "/api/characters", None).await;
-    assert_eq!(characters.as_array().unwrap().len(), 1);
+    assert_eq!(characters.as_array().unwrap().len(), 2);
+    let (_, groups) = t.json("GET", "/api/groups", None).await;
+    assert_eq!(groups.as_array().unwrap().len(), 1);
 }
 
 fn zip_entries(bytes: &[u8]) -> std::collections::BTreeMap<String, Vec<u8>> {
@@ -950,15 +1092,28 @@ async fn exports_a_sillytavern_folder_that_imports_again() {
     assert_eq!(status, StatusCode::OK);
     let (_, names) = t.json("GET", "/api/export/st/names", None).await;
     let (_, characters) = t.json("GET", "/api/characters", None).await;
-    let seraphina = characters[0]["id"].as_str().unwrap();
-    assert_eq!(names["characters"][seraphina], "Seraphina.png");
+    let seraphina = characters
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["name"] == "Seraphina")
+        .unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_eq!(names["characters"][&seraphina], "Seraphina.png");
 
+    let (_, stash) = t.json("GET", "/api/settings/st_import", None).await;
+    let rain = stash["data"]["backgrounds"][0]["hash"].clone();
     let req = Request::post("/api/export/st")
         .header("x-bt-client", "1")
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(
-            json!({ "settings": { "world_info_settings": { "world_info": { "globalSelect": ["Eldoria"] } } } })
-                .to_string(),
+            json!({
+                "settings": { "world_info_settings": { "world_info": { "globalSelect": ["Eldoria"] } } },
+                "backgrounds": [{ "name": "rain.jpg", "hash": rain }, { "name": "gone.png", "hash": "0".repeat(64) }],
+            })
+            .to_string(),
         ))
         .unwrap();
     let res = t.send(req).await;
@@ -973,7 +1128,12 @@ async fn exports_a_sillytavern_folder_that_imports_again() {
         "worlds/Eldoria.json",
         "OpenAI Settings/My Preset.json",
         "instruct/ChatML.json",
+        "QuickReplies/Tools.json",
+        "themes/Night.json",
+        "backgrounds/rain.jpg",
         "User Avatars/user-default.png",
+        "groups/1760000000000.json",
+        "group chats/2026-10-15@12h00m00s.jsonl",
         "settings.json",
     ] {
         assert!(
@@ -997,6 +1157,17 @@ async fn exports_a_sillytavern_folder_that_imports_again() {
             .collect()
     };
     assert_eq!(as_json(&exported), as_json(&original));
+    // So does the group chat, members named by their avatars.
+    let group_chat =
+        String::from_utf8(files["group chats/2026-10-15@12h00m00s.jsonl"].clone()).unwrap();
+    assert_eq!(as_json(&group_chat), as_json(&group_chat_jsonl()));
+    let group: Value = serde_json::from_slice(&files["groups/1760000000000.json"]).unwrap();
+    assert_eq!(group["members"], json!(["Seraphina.png", "Aria.png"]));
+    assert_eq!(group["disabled_members"], json!(["Aria.png"]));
+    assert_eq!(group["chats"], json!(["2026-10-15@12h00m00s"]));
+    assert_eq!(group["chat_id"], "2026-10-15@12h00m00s");
+    assert_eq!(group["generation_mode"], 1);
+    assert_eq!(group["fav"], true);
     // Attachments go back into SillyTavern's user folder.
     let photos =
         as_json(&String::from_utf8(files["chats/Seraphina/Photos.jsonl"].clone()).unwrap());
@@ -1032,6 +1203,14 @@ async fn exports_a_sillytavern_folder_that_imports_again() {
         "user-default.png"
     );
     let tag_id = settings["tag_map"]["Seraphina.png"][0].as_str().unwrap();
+    let group_tag = settings["tag_map"]["1760000000000"][0].as_str().unwrap();
+    assert!(
+        settings["tags"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t["id"] == group_tag && t["name"] == "favorite")
+    );
     let favorite = settings["tags"]
         .as_array()
         .unwrap()
@@ -1045,10 +1224,152 @@ async fn exports_a_sillytavern_folder_that_imports_again() {
         .upload("/api/import/st", "export.zip", &bytes, &[])
         .await;
     assert_eq!(status, StatusCode::OK, "{report}");
-    assert_eq!(report["characters"], 1);
-    assert_eq!(report["chats"], 2);
+    assert_eq!(report["characters"], 2);
+    assert_eq!(report["groups"], 1);
+    assert_eq!(report["chats"], 3);
     assert_eq!(report["attachments"], 2);
     assert_eq!(report["lorebooks"], 1);
-    assert_eq!(report["presets"], 2);
+    assert_eq!(report["presets"], 4);
     assert_eq!(report["personas"], 2);
+}
+
+#[tokio::test]
+async fn groups_hold_members_and_their_chats() {
+    let t = test_app();
+    let mut ids = Vec::new();
+    for name in ["Aiko", "Ren"] {
+        let (status, character) = t
+            .upload(
+                "/api/characters/import",
+                &format!("{name}.png"),
+                &card_png(name),
+                &[],
+            )
+            .await;
+        assert_eq!(status, StatusCode::OK, "{character}");
+        ids.push(
+            character["characters"][0]["id"]
+                .as_str()
+                .unwrap()
+                .to_string(),
+        );
+    }
+    let (status, group) = t
+        .json(
+            "POST",
+            "/api/groups",
+            Some(json!({
+                "name": "Café",
+                "members": [{ "characterId": ids[0] }, { "characterId": ids[1], "muted": true }],
+                "settings": { "activation_strategy": 3 }
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{group}");
+    let group_id = group["id"].as_str().unwrap();
+    assert_eq!(group["members"][1]["muted"], true);
+    // Members must be the user's characters.
+    let (status, _) = t
+        .json(
+            "POST",
+            "/api/groups",
+            Some(json!({ "name": "Bad", "members": [{ "characterId": "nope" }] })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    let (status, updated) = t
+        .json(
+            "PATCH",
+            &format!("/api/groups/{group_id}"),
+            Some(json!({ "settings": { "generation_mode": 1 }, "rev": group["rev"] })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{updated}");
+    assert_eq!(
+        updated["settings"],
+        json!({ "activation_strategy": 3, "generation_mode": 1 })
+    );
+    let (status, _) = t
+        .json(
+            "PATCH",
+            &format!("/api/groups/{group_id}"),
+            Some(json!({ "name": "Stale", "rev": group["rev"] })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
+    // A group chat; replies name the member who wrote them.
+    let (status, created) = t
+        .json(
+            "POST",
+            "/api/chats",
+            Some(json!({
+                "groupId": group_id,
+                "title": "Evening",
+                "messages": [
+                    { "role": "assistant", "name": "Aiko", "characterId": ids[0], "swipes": [{ "content": "Welcome!" }] },
+                    { "role": "user", "name": "Mika", "swipes": [{ "content": "Hi." }] }
+                ]
+            })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{created}");
+    let chat_id = created["chat"]["id"].as_str().unwrap();
+    assert_eq!(created["chat"]["groupId"], group_id);
+    assert_eq!(created["chat"]["characterId"], Value::Null);
+    assert_eq!(created["messages"][0]["characterId"], ids[0]);
+    let (_, chats) = t
+        .json("GET", &format!("/api/groups/{group_id}/chats"), None)
+        .await;
+    assert_eq!(chats.as_array().unwrap().len(), 1);
+    // Group chat titles are unique within the group only.
+    let (_, other) = t
+        .json(
+            "POST",
+            "/api/chats",
+            Some(json!({ "characterId": ids[0], "title": "Evening" })),
+        )
+        .await;
+    assert_eq!(other["chat"]["title"], "Evening");
+
+    let res = t
+        .send(
+            Request::get(format!("/api/chats/{chat_id}/export"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await;
+    let text =
+        String::from_utf8(res.into_body().collect().await.unwrap().to_bytes().to_vec()).unwrap();
+    let lines: Vec<Value> = text
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(lines[0]["user_name"], "unused");
+    assert_eq!(lines[1]["original_avatar"], "Aiko.png");
+    assert_eq!(
+        lines[1]["force_avatar"],
+        "/thumbnail?type=avatar&file=Aiko.png"
+    );
+    assert!(lines[2].get("original_avatar").is_none());
+
+    let (_, boot) = t.json("GET", "/api/bootstrap", None).await;
+    assert_eq!(boot["groups"][0]["chatCount"], 1);
+
+    // Deleting a member keeps the group; deleting the group removes its chats.
+    let (status, _) = t
+        .json("DELETE", &format!("/api/characters/{}", ids[1]), None)
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (_, group) = t
+        .json("GET", &format!("/api/groups/{group_id}"), None)
+        .await;
+    assert_eq!(group["members"].as_array().unwrap().len(), 1);
+    let (status, _) = t
+        .json("DELETE", &format!("/api/groups/{group_id}"), None)
+        .await;
+    assert_eq!(status, StatusCode::NO_CONTENT);
+    let (status, _) = t.json("GET", &format!("/api/chats/{chat_id}"), None).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
 }

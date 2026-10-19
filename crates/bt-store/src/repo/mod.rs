@@ -4,12 +4,14 @@
 pub mod characters;
 pub mod chats;
 pub mod files;
+pub mod groups;
 pub mod jobs;
 pub mod lorebooks;
 pub mod messages;
 pub mod personas;
 pub mod presets;
 pub mod prompt_logs;
+pub mod search;
 pub mod secrets;
 pub mod sessions;
 pub mod settings;

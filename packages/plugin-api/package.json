@@ -1,0 +1,13 @@
+{
+  "name": "@bakatavern/plugin-api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "BakaTavern plugin API: types and definePlugin for plugins (ES modules the app loads).",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json"
+  }
+}

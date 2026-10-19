@@ -93,10 +93,12 @@
     void chat.updateMetadata({ persona: persona.id });
   }
 
+  /** Locks the persona to the open character or group (SillyTavern's persona connections). */
   function useForCharacter(persona: Persona) {
-    if (!chat.characterId) return;
+    const owner = chat.groupId ?? chat.characterId;
+    if (!owner) return;
     settings.update('persona', {
-      characterPersona: { ...prefs.characterPersona, [chat.characterId]: persona.id },
+      characterPersona: { ...prefs.characterPersona, [owner]: persona.id },
     });
   }
 </script>
@@ -199,8 +201,11 @@
         <button class="btn" disabled={!chat.chat} onclick={() => useForChat(selected)}
           >{t('persona.useInChat')}</button
         >
-        <button class="btn" disabled={!chat.characterId} onclick={() => useForCharacter(selected)}
-          >{t('persona.useForCharacter')}</button
+        <button
+          class="btn"
+          disabled={!chat.characterId && !chat.groupId}
+          onclick={() => useForCharacter(selected)}
+          >{chat.groupId ? t('persona.useForGroup') : t('persona.useForCharacter')}</button
         >
         <button class="btn" onclick={() => settings.update('persona', { defaultPersonaId: selected.id })}
           >{t('persona.makeDefault')}</button

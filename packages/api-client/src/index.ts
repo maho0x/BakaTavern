@@ -18,8 +18,11 @@ import type {
   ChatWithMessages,
   ChangeEvent,
   CreateChat,
+  CreateGroup,
   CreateSecret,
   FileRecord,
+  Group,
+  GroupPatch,
   JobInfo,
   Lorebook,
   LorebookInfo,
@@ -30,6 +33,7 @@ import type {
   PersonaInput,
   Preset,
   PresetInfo,
+  SearchHit,
   SecretInfo,
   SettingsDoc,
   StExportNames,
@@ -194,9 +198,31 @@ export class BakaClient {
   characterExportUrl = (id: string, format: 'png' | 'json' = 'png') =>
     this.url(`/api/characters/${id}/export?format=${format}`);
 
+  // Groups
+  listGroups = () => this.request<Group[]>('GET', '/api/groups');
+  getGroup = (id: string) => this.request<Group>('GET', `/api/groups/${id}`);
+  createGroup = (body: CreateGroup) => this.request<Group>('POST', '/api/groups', body);
+  updateGroup = (id: string, patch: GroupPatch, rev?: number) =>
+    this.request<Group>('PATCH', `/api/groups/${id}`, { ...patch, rev });
+  deleteGroup = (id: string) => this.request<void>('DELETE', `/api/groups/${id}`);
+  setGroupTags = (id: string, tagIds: string[]) =>
+    this.request<Group>('PUT', `/api/groups/${id}/tags`, tagIds);
+  setGroupAvatar = (id: string, file: File | Blob) =>
+    this.#upload<Group>(`/api/groups/${id}/avatar`, [file], {}, 'PUT');
+  clearGroupAvatar = (id: string) => this.request<Group>('DELETE', `/api/groups/${id}/avatar`);
+  listGroupChats = (groupId: string) => this.request<Chat[]>('GET', `/api/groups/${groupId}/chats`);
+
   // Chats and messages
   listChats = (characterId: string) => this.request<Chat[]>('GET', `/api/characters/${characterId}/chats`);
   recentChats = (limit = 20) => this.request<Chat[]>('GET', `/api/chats/recent?limit=${limit}`);
+  /** Messages of every chat containing the text (or of one character's or group's chats). */
+  search = (q: string, scope: { characterId?: string; groupId?: string; limit?: number } = {}) => {
+    const params = new URLSearchParams({ q });
+    if (scope.characterId) params.set('characterId', scope.characterId);
+    if (scope.groupId) params.set('groupId', scope.groupId);
+    if (scope.limit) params.set('limit', String(scope.limit));
+    return this.request<SearchHit[]>('GET', `/api/search?${params}`);
+  };
   createChat = (body: CreateChat) => this.request<ChatWithMessages>('POST', '/api/chats', body);
   getChat = (id: string) => this.request<Chat>('GET', `/api/chats/${id}`);
   updateChat = (id: string, patch: UpdateChat) => this.request<Chat>('PATCH', `/api/chats/${id}`, patch);
@@ -210,8 +236,9 @@ export class BakaClient {
   /** The prompt of the generation that started at `startedAt`, and the one before it. */
   getPrompt = (chatId: string, startedAt: string) =>
     this.request<PromptLog>('GET', `/api/chats/${chatId}/prompts?startedAt=${encodeURIComponent(startedAt)}`);
-  importChat = (file: File | Blob, characterId: string) =>
-    this.#upload<Chat>('/api/chats/import', [file], { characterId });
+  /** Imports a SillyTavern chat file into a character's or a group's chats. */
+  importChat = (file: File | Blob, owner: { characterId: string } | { groupId: string }) =>
+    this.#upload<Chat>('/api/chats/import', [file], owner);
   chatExportUrl = (id: string, format: 'jsonl' | 'txt' = 'jsonl') =>
     this.url(`/api/chats/${id}/export?format=${format}`);
 
@@ -272,9 +299,14 @@ export class BakaClient {
   /** File names the export gives characters and personas (for building `settings.json`). */
   stExportNames = () => this.request<StExportNames>('GET', '/api/export/st/names');
   /** Everything as a SillyTavern user folder (zip), with the given `settings.json`. */
-  exportSillyTavern = async (settings: Record<string, unknown>) =>
+  exportSillyTavern = async (
+    settings: Record<string, unknown>,
+    backgrounds: { name: string; hash: string }[] = [],
+  ) =>
     (
-      await this.#raw('POST', '/api/export/st', json({ settings }), { 'content-type': 'application/json' })
+      await this.#raw('POST', '/api/export/st', json({ settings, backgrounds }), {
+        'content-type': 'application/json',
+      })
     ).blob();
 
   // Presets

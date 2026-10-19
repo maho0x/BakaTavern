@@ -93,20 +93,23 @@
       <small>{t('note.intervalHint')}</small>
     </label>
   </div>
-  <hr />
-  <label class="check"><input type="checkbox" bind:checked={charEnabled} />{t('note.useCharNote')}</label>
-  <label class="field">
-    <span>{t('note.charNote', { name: chat.character?.name ?? '' })}</span>
-    <textarea class="textarea prose" rows="3" bind:value={charPrompt} disabled={!charEnabled}></textarea>
-  </label>
-  <label class="field">
-    <span>{t('note.charNotePosition')}</span>
-    <select class="select" bind:value={charPosition} disabled={!charEnabled}>
-      <option value={0}>{t('note.replace')}</option>
-      <option value={1}>{t('note.before')}</option>
-      <option value={2}>{t('note.after')}</option>
-    </select>
-  </label>
+  <!-- In a group, each member's own note applies when it replies (set in a one-on-one chat). -->
+  {#if chat.characterId}
+    <hr />
+    <label class="check"><input type="checkbox" bind:checked={charEnabled} />{t('note.useCharNote')}</label>
+    <label class="field">
+      <span>{t('note.charNote', { name: chat.character?.name ?? '' })}</span>
+      <textarea class="textarea prose" rows="3" bind:value={charPrompt} disabled={!charEnabled}></textarea>
+    </label>
+    <label class="field">
+      <span>{t('note.charNotePosition')}</span>
+      <select class="select" bind:value={charPosition} disabled={!charEnabled}>
+        <option value={0}>{t('note.replace')}</option>
+        <option value={1}>{t('note.before')}</option>
+        <option value={2}>{t('note.after')}</option>
+      </select>
+    </label>
+  {/if}
   {#snippet footer()}
     <button class="btn ghost" onclick={onclose}>{t('common.cancel')}</button>
     <button class="btn primary" onclick={save}>{t('common.save')}</button>

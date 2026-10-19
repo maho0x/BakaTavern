@@ -146,7 +146,12 @@ export class MacroEngine {
     // Dynamic macros take precedence over registered ones (SillyTavern `#resolveMacro`).
     const dynamic =
       env.dynamic && Object.entries(env.dynamic).find(([k]) => k.toLowerCase() === node.name.toLowerCase());
-    if (dynamic) return this.#postProcess(typeof dynamic[1] === 'function' ? dynamic[1]() : dynamic[1], env);
+    if (dynamic) {
+      const value = dynamic[1];
+      if (typeof value !== 'function') return this.#postProcess(value, env);
+      const args = node.args.map((a) => this.#evaluateText(a.raw, env, offset + a.start, depth + 1).trim());
+      return this.#postProcess(value(args), env);
+    }
 
     const def = this.registry.get(node.name);
     if (!def) return node.raw;

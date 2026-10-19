@@ -2,6 +2,7 @@ mod bootstrap;
 pub(crate) mod characters;
 pub(crate) mod chats;
 pub(crate) mod files;
+mod groups;
 mod lorebooks;
 mod personas;
 mod presets;
@@ -31,6 +32,7 @@ pub fn routes() -> Router<AppState> {
         .merge(characters::routes())
         .merge(chats::routes())
         .merge(files::routes())
+        .merge(groups::routes())
         .merge(lorebooks::routes())
         .merge(personas::routes())
         .merge(presets::routes())

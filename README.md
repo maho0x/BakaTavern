@@ -4,7 +4,7 @@ A lighter, faster SillyTavern, rebuilt from scratch and compatible with SillyTav
 
 [简体中文说明](README.zh-CN.md)
 
-> Status: in development. Chatting works end to end (milestone M1). Group chats, STscript, the front-end card bridge and the official plugins follow in later milestones.
+> Status: in development. Chatting (milestone M1), prompt parity with SillyTavern (M2), and group chats, STscript, Quick Replies, the plugin API and the front-end card (TavernHelper) bridge (M3) are largely done. The official plugins and the desktop and mobile apps follow in later milestones.
 
 ## Highlights
 

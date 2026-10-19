@@ -1,0 +1,1256 @@
+{
+  "image": "ghcr.io/sillytavern/sillytavern:1.19.0",
+  "recordedAt": "2026-10-19T08:11:35.839Z",
+  "outcomes": {
+    "pipe-basic": {
+      "pipe": "HELLO",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "pipe-macro": {
+      "pipe": "abc",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "pipe-no-inject": {
+      "pipe": "",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "pipe-implicit": {
+      "pipe": "HELLO",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "quotes-unnamed": {
+      "pipe": "quoted  text after",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "quotes-named": {
+      "pipe": "x  y x  y",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "escaped-pipe": {
+      "pipe": "a | b",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "escaped-braces": {
+      "pipe": "{: not a closure :}",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "escaped-macro": {
+      "pipe": "{{char}}",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "trailing-space": {
+      "pipe": "spaced out",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "multiline": {
+      "pipe": "one\ntwo three",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "comment-line": {
+      "pipe": "2",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "comment-hash": {
+      "pipe": "13",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "comment-block": {
+      "pipe": "14",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "macro-names": {
+      "pipe": "Aiko and User",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "macro-pipe-in-braces": {
+      "pipe": "a|a done",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "strict-escaping": {
+      "pipe": "b",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "strict-escaping-escaped": {
+      "pipe": "a \\| b",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "strict-quote-pipe": {
+      "pipe": "a | b",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "setvar-getvar": {
+      "pipe": "5",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {
+        "x": "5"
+      },
+      "global": {}
+    },
+    "setvar-pipe": {
+      "pipe": "hello world",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {
+        "x": "hello world"
+      },
+      "global": {}
+    },
+    "addvar-number": {
+      "pipe": "5",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {
+        "n": 5
+      },
+      "global": {}
+    },
+    "addvar-text": {
+      "pipe": "abcd",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {
+        "s": "abcd"
+      },
+      "global": {}
+    },
+    "addvar-list": {
+      "pipe": "[\"a\",\"b\"]",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {
+        "l": "[\"a\",\"b\"]"
+      },
+      "global": {}
+    },
+    "addvar-new": {
+      "pipe": "4",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {
+        "fresh": 4
+      },
+      "global": {}
+    },
+    "incdec": {
+      "pipe": "1",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {
+        "c": 1
+      },
+      "global": {}
+    },
+    "index-object": {
+      "pipe": "{\"name\":\"Aiko\",\"age\":21}",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {
+        "obj": "{\"name\":\"Aiko\",\"age\":21}"
+      },
+      "global": {}
+    },
+    "index-list": {
+      "pipe": "[null,\"b\"]",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {
+        "arr": "[null,\"b\"]"
+      },
+      "global": {}
+    },
+    "index-read": {
+      "pipe": "{\"b\":[1,2]}",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {
+        "o": "{\"a\":{\"b\":[1,2]}}"
+      },
+      "global": {}
+    },
+    "index-as-types": {
+      "pipe": "{\"a\":true,\"b\":[1],\"c\":null}",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {
+        "t": "{\"a\":true,\"b\":[1],\"c\":null}"
+      },
+      "global": {}
+    },
+    "globalvars": {
+      "pipe": "12",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {
+        "g": 12
+      }
+    },
+    "flushvar": {
+      "pipe": "",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "flushvar-missing": {
+      "pipe": "",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "existing-vars": {
+      "pipe": "happy-dark",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {
+        "mood": "happy"
+      },
+      "global": {
+        "theme": "dark"
+      }
+    },
+    "macro-setvar": {
+      "pipe": "x7",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {
+        "m": "7"
+      },
+      "global": {}
+    },
+    "numeric-string": {
+      "pipe": "7",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {
+        "z": "007"
+      },
+      "global": {}
+    },
+    "empty-string": {
+      "pipe": "",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {
+        "e": ""
+      },
+      "global": {}
+    },
+    "listvar-object": {
+      "pipe": "[{\"key\":\"a\",\"value\":\"1\",\"scope\":\"local\"},{\"key\":\"b\",\"value\":\"2\",\"scope\":\"global\"}]",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {
+        "a": "1"
+      },
+      "global": {
+        "b": "2"
+      }
+    },
+    "listvar-pipe": {
+      "pipe": "### Local variables (Scenario - 2026-10-15@00h00m00s):\na: 1",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {
+        "a": "1"
+      },
+      "global": {}
+    },
+    "let-var": {
+      "pipe": "2",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "let-key": {
+      "pipe": "some value here",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "let-empty": {
+      "pipe": "",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "let-twice": {
+      "error": "Variable named \"a\" already exists.",
+      "local": {},
+      "global": {}
+    },
+    "var-missing": {
+      "error": "No such variable: \"nothing\"",
+      "local": {},
+      "global": {}
+    },
+    "var-index": {
+      "pipe": "{\"a\":1,\"b\":\"2\"}",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "var-macro": {
+      "pipe": "hi Aiko",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "var-macro-index": {
+      "pipe": "c",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "closure-scope": {
+      "pipe": "inner/outer",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "closure-parent-var": {
+      "pipe": "2",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "closure-immediate": {
+      "pipe": "got inner",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "closure-args": {
+      "pipe": "1+5",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "closure-arg-closure": {
+      "pipe": "default",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "closure-stored": {
+      "pipe": "called",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "closure-not-callable": {
+      "error": "\"f\" is not callable.",
+      "local": {},
+      "global": {}
+    },
+    "closure-pipe-in": {
+      "pipe": "outer!",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "closure-empty": {
+      "pipe": "",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "closure-nested": {
+      "pipe": "deeper",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "closure-serialize": {
+      "pipe": " /pass x | /upper ",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "closure-deserialize": {
+      "pipe": "y",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "closure-as-pipe": {
+      "pipe": "[Closure]",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "break-closure": {
+      "pipe": "a!",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "break-value": {
+      "pipe": "stopped",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "break-root": {
+      "pipe": "b",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "if-true": {
+      "pipe": "yes",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "if-else": {
+      "pipe": "no",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "if-text-command": {
+      "pipe": "found",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "if-truthy": {
+      "pipe": "on",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "if-not": {
+      "pipe": "falsy",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "if-variable": {
+      "pipe": "alive",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {
+        "hp": "3"
+      },
+      "global": {}
+    },
+    "if-string-compare": {
+      "pipe": "same",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "if-number-in": {
+      "pipe": "in",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "if-no-match": {
+      "pipe": "",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "if-bad-rule": {
+      "error": "Unknown boolean comparison rule for type number. Accepted: gt, gte, lt, lte, eq, neq. Provided: wat",
+      "local": {},
+      "global": {}
+    },
+    "times-closure": {
+      "pipe": "3",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {
+        "c": 3
+      },
+      "global": {}
+    },
+    "times-index": {
+      "pipe": "6",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {
+        "s": 6
+      },
+      "global": {}
+    },
+    "times-text": {
+      "pipe": "xx",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {
+        "t": "xx"
+      },
+      "global": {}
+    },
+    "times-guard": {
+      "pipe": "100",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {
+        "g": 100
+      },
+      "global": {}
+    },
+    "times-break": {
+      "pipe": "done",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {
+        "t": 3
+      },
+      "global": {}
+    },
+    "while-loop": {
+      "pipe": "5",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {
+        "i": 5
+      },
+      "global": {}
+    },
+    "while-guard": {
+      "pipe": "100",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {
+        "w": 100
+      },
+      "global": {}
+    },
+    "while-guard-off": {
+      "pipe": "150",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {
+        "w": 150
+      },
+      "global": {}
+    },
+    "abort": {
+      "pipe": null,
+      "isAborted": true,
+      "isQuietlyAborted": true,
+      "abortReason": "1",
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "abort-loud": {
+      "pipe": null,
+      "isAborted": true,
+      "isQuietlyAborted": false,
+      "abortReason": "why not",
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "abort-nested": {
+      "pipe": null,
+      "isAborted": true,
+      "isQuietlyAborted": true,
+      "abortReason": "/abort command executed",
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "math-add": {
+      "pipe": "6",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "math-add-list": {
+      "pipe": "6.5",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "math-add-vars": {
+      "pipe": "10",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {
+        "a": "4"
+      },
+      "global": {
+        "b": "5"
+      }
+    },
+    "math-sub": {
+      "pipe": "5",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "math-mul": {
+      "pipe": "24",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "math-div": {
+      "pipe": "2.5",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "math-div-zero": {
+      "pipe": "0",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "math-mod": {
+      "pipe": "1",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "math-pow": {
+      "pipe": "1024",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "math-minmax": {
+      "pipe": "-2",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "math-unary": {
+      "pipe": "3",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "math-trig": {
+      "pipe": "0",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "math-nan": {
+      "pipe": "0",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "math-empty": {
+      "pipe": "0",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "math-pipe": {
+      "pipe": "15",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "rand-fixed": {
+      "pipe": "3",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "rand-round": {
+      "pipe": "2",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "len-text": {
+      "pipe": "5",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "len-list": {
+      "pipe": "2",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "len-object": {
+      "pipe": "3",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "len-number": {
+      "pipe": "5",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "sort-list": {
+      "pipe": "[1,2,3,\"a\",\"b\"]",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "sort-object": {
+      "pipe": "[\"a\",\"b\"]",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "sort-values": {
+      "pipe": "[\"b\",\"a\"]",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "sort-invalid": {
+      "pipe": "not json",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "upper-lower": {
+      "pipe": "mixed case",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "substr": {
+      "pipe": "el-",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "substr-start": {
+      "pipe": "lo",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "replace-literal": {
+      "pipe": "baNANA",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "replace-regex": {
+      "pipe": "bonono",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "replace-regex-groups": {
+      "pipe": "world hello",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "test-regex": {
+      "pipe": "true",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "match-groups": {
+      "pipe": "[\"an\",\"a\",\"n\"]",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "match-global": {
+      "pipe": "[[\"an\"],[\"an\"]]",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "match-none": {
+      "pipe": "",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "trimstart": {
+      "pipe": "There you are.",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "trimend": {
+      "pipe": "One sentence.",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "array-wrap": {
+      "pipe": "[\"x\"]",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "array-wrap-object": {
+      "pipe": "[{\"a\":1}]",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "array-wrap-number": {
+      "pipe": "[5]",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "array-unwrap": {
+      "pipe": "{\"a\":1}",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "array-unwrap-other": {
+      "pipe": "plain",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "fuzzy-first": {
+      "pipe": "a",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "fuzzy-best": {
+      "pipe": "banana",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "fuzzy-var": {
+      "pipe": "red",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {
+        "opts": "[\"red\",\"green\"]"
+      },
+      "global": {}
+    },
+    "fuzzy-threshold": {
+      "pipe": "",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "pass-list": {
+      "pipe": "[1,2]",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "return-alias": {
+      "pipe": "done",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "delay": {
+      "pipe": "waited",
+      "isAborted": false,
+      "isQuietlyAborted": false,
+      "abortReason": null,
+      "isBreak": false,
+      "local": {},
+      "global": {}
+    },
+    "unknown-command": {
+      "error": "Unknown command at position 11: \"/not-a-command\"",
+      "local": {},
+      "global": {}
+    }
+  }
+}

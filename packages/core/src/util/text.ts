@@ -20,3 +20,18 @@ export function collapseNewlines(text: string): string {
 export function escapeRegex(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
+
+/** A JSON list of strings, else comma-separated values (SillyTavern `parseStringArray`). */
+export function parseStringArray(value: unknown): string[] {
+  if (!value || typeof value !== 'string') return [];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!Array.isArray(parsed)) throw new Error('Not an array');
+    return parsed.map((x) => String(x));
+  } catch {
+    return value
+      .split(',')
+      .map((x) => x.trim())
+      .filter((x) => x);
+  }
+}

@@ -21,19 +21,23 @@ import {
   type TextTokenizerSetting,
 } from '@bakatavern/core';
 
+import { backgroundCss, backgroundName } from '../state/background-names.ts';
 import {
   chatDefaults,
   formattingDefaults,
   noteDefaults,
   textConnectionDefaults,
   worldInfoDefaults,
+  type BackgroundPrefs,
   type ChatPrefs,
   type ConnectionPrefs,
   type FormattingPrefs,
   type LogitBiasPrefs,
   type NotePrefs,
   type PersonaPrefs,
+  type QuickReplyPrefs,
   type RegexPrefs,
+  type SetLink,
   type TextConnectionPrefs,
   type WorldInfoPrefs,
 } from '../state/prefs.ts';
@@ -44,6 +48,8 @@ export interface StImportStash {
   settings: Record<string, unknown>;
   /** SillyTavern avatar file → character id. */
   characters: Record<string, string>;
+  /** SillyTavern group id → group id (imports before groups were supported have none). */
+  groups?: Record<string, string>;
   /** Persona avatar file → persona id. */
   personas: Record<string, string>;
   /** Lorebook name → id. */
@@ -52,6 +58,8 @@ export interface StImportStash {
   presets: Record<string, string>;
   /** Imported keys; `stId` is SillyTavern's id for the key, which profiles refer to. */
   secrets: { id: string; provider: string; active: boolean; stId?: string | null }[];
+  /** Pictures from `backgrounds/`, stored as files. */
+  backgrounds?: { name: string; hash: string }[];
   importedAt: number;
 }
 
@@ -140,6 +148,8 @@ export interface StSettingsPatch {
   persona: Partial<PersonaPrefs>;
   regex: Partial<RegexPrefs>;
   variables: Record<string, unknown>;
+  quickReply: Partial<QuickReplyPrefs>;
+  background: Partial<BackgroundPrefs>;
   /** Imported keys and the addresses they may be sent to. */
   secretOrigins: { id: string; origins: string[] }[];
 }
@@ -345,7 +355,7 @@ export function mapStSettings(stash: StImportStash, current: { regex: RegexPrefs
     characterNotes,
   };
 
-  // Personas locked to characters.
+  // Personas locked to characters and groups.
   const characterPersona: Record<string, string> = {};
   for (const [avatar, description] of Object.entries(obj(power.persona_descriptions))) {
     const personaId = stash.personas[avatar];
@@ -353,7 +363,12 @@ export function mapStSettings(stash: StImportStash, current: { regex: RegexPrefs
     if (!personaId || !Array.isArray(connections)) continue;
     for (const connection of connections) {
       const c = obj(connection);
-      const id = c.type === 'character' ? characterId(c.id) : undefined;
+      const id =
+        c.type === 'character'
+          ? characterId(c.id)
+          : c.type === 'group'
+            ? stash.groups?.[str(c.id)]
+            : undefined;
       if (id) characterPersona[id] = personaId;
     }
   }
@@ -388,6 +403,38 @@ export function mapStSettings(stash: StImportStash, current: { regex: RegexPrefs
       variables[name] = value;
     }
   }
+
+  // Quick Replies: where the sets show (character links by avatar file → by character id).
+  const qr = obj(extensions.quickReplyV2);
+  const links = (config: unknown): SetLink[] =>
+    (Array.isArray(obj(config).setList) ? (obj(config).setList as unknown[]) : [])
+      .map(obj)
+      .map((l) => ({
+        set: str(typeof l.set === 'object' ? obj(l.set).name : l.set),
+        isVisible: l.isVisible !== false,
+      }))
+      .filter((l) => l.set);
+  const quickReply: Partial<QuickReplyPrefs> = {};
+  if (Object.keys(qr).length) {
+    if (typeof qr.isEnabled === 'boolean') quickReply.isEnabled = qr.isEnabled;
+    if (typeof qr.isCombined === 'boolean') quickReply.isCombined = qr.isCombined;
+    if (qr.config) quickReply.config = { setList: links(qr.config) };
+    quickReply.characterConfigs = Object.fromEntries(
+      Object.entries(obj(qr.characterConfigs))
+        .filter(([avatar]) => characterId(avatar))
+        .map(([avatar, config]) => [characterId(avatar)!, { setList: links(config) }]),
+    );
+  }
+
+  // The background in use and the pictures to choose from.
+  const bg = obj(st.background);
+  const fits: BackgroundPrefs['fit'][] = ['classic', 'cover', 'contain', 'stretch', 'center'];
+  const background: Partial<BackgroundPrefs> = {};
+  if (stash.backgrounds?.length) background.items = stash.backgrounds;
+  const currentBackground = backgroundName(bg.url) ?? (str(bg.name) || null);
+  if (currentBackground) background.current = currentBackground;
+  if (fits.includes(bg.fitting as BackgroundPrefs['fit']))
+    background.fit = bg.fitting as BackgroundPrefs['fit'];
 
   // Imported keys may be sent to their provider (or the Custom URL / reverse proxy in use), and
   // Text Completion keys to their backend's server.
@@ -444,13 +491,19 @@ export function mapStSettings(stash: StImportStash, current: { regex: RegexPrefs
     persona: { characterPersona },
     regex,
     variables,
+    quickReply,
+    background,
     secretOrigins,
   };
 }
 
 export interface StExportInput {
   /** File names the export gives characters and personas (`/api/export/st/names`). */
-  names: { characters: Record<string, string>; personas: Record<string, string> };
+  names: {
+    characters: Record<string, string>;
+    personas: Record<string, string>;
+    groups: Record<string, string>;
+  };
   connection: ConnectionPrefs;
   chat: ChatPrefs;
   worldinfo: WorldInfoPrefs;
@@ -458,9 +511,13 @@ export interface StExportInput {
   persona: PersonaPrefs;
   regex: RegexPrefs;
   variables: Record<string, unknown>;
+  quickReply?: QuickReplyPrefs;
+  background?: BackgroundPrefs;
   /** Chat Completion preset id → name. */
   presetNames: Record<string, string>;
   formatting?: FormattingPrefs;
+  /** The imported theme in use (SillyTavern `power_user.theme`). */
+  themeName?: string | null;
   logitbias?: LogitBiasPrefs;
   profiles?: ProfilePrefs;
   /** The templates and Text Completion preset in effect. */
@@ -490,12 +547,15 @@ export function toStSettings(input: StExportInput): Record<string, unknown> {
   if (input.logitbias) oai.bias_presets = input.logitbias.lists;
 
   const personaDescriptions: Record<string, Json> = {};
-  for (const [characterId, personaId] of Object.entries(input.persona.characterPersona)) {
+  for (const [ownerId, personaId] of Object.entries(input.persona.characterPersona)) {
     const file = names.personas[personaId];
-    const character = avatar(characterId);
-    if (!file || !character) continue;
+    const character = avatar(ownerId);
+    const group = names.groups[ownerId];
+    if (!file || !(character || group)) continue;
     const entry = (personaDescriptions[file] ??= { connections: [] });
-    (entry.connections as Json[]).push({ type: 'character', id: character });
+    (entry.connections as Json[]).push(
+      character ? { type: 'character', id: character } : { type: 'group', id: group },
+    );
   }
 
   // Text Completion
@@ -548,6 +608,7 @@ export function toStSettings(input: StExportInput): Record<string, unknown> {
     textgenerationwebui_settings: tg,
     oai_settings: oai,
     power_user: {
+      ...(input.themeName ? { theme: input.themeName } : {}),
       ...formattingSettings,
       user_prompt_bias: chat.promptBias,
       custom_stopping_strings: JSON.stringify(chat.stoppingStrings),
@@ -583,6 +644,15 @@ export function toStSettings(input: StExportInput): Record<string, unknown> {
       world_info_character_strategy: s.characterStrategy,
       world_info_overflow_alert: s.overflowAlert,
     },
+    ...(input.background?.current
+      ? {
+          background: {
+            name: input.background.current,
+            url: backgroundCss(input.background.current),
+            fitting: input.background.fit,
+          },
+        }
+      : {}),
     extension_settings: {
       regex: regex.scripts,
       character_allowed_regex: regex.allowedCharacters.map(avatar).filter(Boolean),
@@ -608,6 +678,22 @@ export function toStSettings(input: StExportInput): Record<string, unknown> {
       variables: {
         global: Object.fromEntries(Object.entries(input.variables).map(([k, v]) => [k, JSON.stringify(v)])),
       },
+      ...(input.quickReply
+        ? {
+            quickReplyV2: {
+              isEnabled: input.quickReply.isEnabled,
+              isCombined: input.quickReply.isCombined,
+              isPopout: false,
+              showPopoutButton: true,
+              config: { setList: input.quickReply.config.setList },
+              characterConfigs: Object.fromEntries(
+                Object.entries(input.quickReply.characterConfigs)
+                  .filter(([id, config]) => avatar(id) && config.setList.length)
+                  .map(([id, config]) => [avatar(id), { setList: config.setList }]),
+              ),
+            },
+          }
+        : {}),
       connectionManager: {
         profiles: input.profiles?.profiles ?? [],
         selectedProfile: input.profiles?.selected ?? null,
