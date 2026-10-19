@@ -210,6 +210,8 @@ export class BridgeHost {
       case 'call': {
         try {
           const value = await this.#api.call(frame, data.method, data.args);
+          // The state first: once the frame's await returns, its copy shows what the call changed.
+          this.#post(frame, { type: 'state', state: this.#api.state() });
           this.#post(frame, { type: 'result', id: data.id, value: plain(value) });
         } catch (error) {
           this.#post(frame, {
